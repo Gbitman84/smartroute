@@ -797,7 +797,8 @@ const COLS = [
 ];
 
 function parseImport(text) {
-  let lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // Trim spaces only – a leading TAB means the first column (app order) is empty and must stay.
+  let lines = text.split(/\r?\n/).map((l) => l.replace(/^ +| +$/g, '')).filter((l) => l.trim());
   lines = lines.filter((l) => !/^\|?\s*:?-{2,}/.test(l)); // markdown separator
   const splitLine = (l) => {
     if (l.includes('\t')) return l.split('\t');
@@ -822,6 +823,8 @@ function parseImport(text) {
     rows = rows.slice(1);
   }
   return rows.map((cells) => {
+    const iShip = map.indexOf('shipmentId'), iApp = map.indexOf('appOrder');
+    if (iApp === 0 && iShip === 1 && /^\d{6,}$/.test((cells[0] || '').trim()) && !/^\d{6,}$/.test((cells[1] || '').trim())) cells = ['', ...cells];
     const r = {};
     map.forEach((k, i) => { if (k) r[k] = (cells[i] ?? '').trim(); });
     if (r.address) {
@@ -872,6 +875,9 @@ function previewSheet(rows) {
       const notes = [];
       let cls = '', include = true;
       if (!r.shipmentId || !r.street) { notes.push(el('span', { class: 'tag bad' }, 'חסר מספר משלוח/רחוב')); cls = 'bad'; include = false; }
+      else if (!/^\d{5,}$/.test(r.shipmentId) || (r.appOrder && !/^#?\d{1,3}$/.test(r.appOrder)) || (r.houseNo && !/^\d/.test(r.houseNo)) || /\d{5,}/.test(r.city)) {
+        notes.push(el('span', { class: 'tag bad' }, 'עמודות מוזזות? בדוק את השורה')); cls = 'bad'; include = false;
+      }
       if (existing.has(r.shipmentId)) { notes.push(el('span', { class: 'tag warn' }, 'כבר קיים – יעודכן אם מסומן')); cls ||= 'dup'; include = false; }
       if (seen.get(r.shipmentId) > 1) { notes.push(el('span', { class: 'tag warn' }, 'כפול בהדבקה')); cls ||= 'dup'; }
       const cb = el('input', { type: 'checkbox' });
