@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#3b0764">
+  <title>SmartRoute</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="sticky-top">
+  <header class="topbar">
+    <div class="brand">Smart<span>Route</span> <em class="lab">LAB</em></div>
+    <button id="dayBtn" class="day-btn" type="button" title="בחירת תאריך / היסטוריה">—</button>
+    <button id="menuBtn" class="icon-btn" type="button" aria-label="תפריט">☰</button>
+  </header>
+  <div id="searchBar" class="search-bar" hidden>
+    <span class="search-ico">🔍</span>
+    <input id="searchInput" type="search" placeholder="חיפוש: שם / כתובת / מספר משלוח / אס׳" autocomplete="off" enterkeyhint="search">
+    <button id="searchClear" class="search-clear" type="button" aria-label="נקה חיפוש" hidden>✕</button>
+  </div>
+  </div>
+
+  <div id="demoBanner" class="banner warn" hidden>מצב הדגמה – הנתונים נשמרים רק בדפדפן הזה. לשמירה בענן יש להגדיר Firebase (ראה README).</div>
+  <div id="readonlyBanner" class="banner info" hidden>
+    <span id="readonlyText"></span>
+    <button id="unlockBtn" type="button" class="btn small">אפשר עריכה</button>
+    <button id="goTodayBtn" type="button" class="btn small ghost">חזרה להיום</button>
+  </div>
+
+  <main id="app" hidden>
+    <section class="toolbar">
+      <button id="refreshBtn" class="btn primary" type="button">🔄 רענון מיקום</button>
+      <button id="routeBtn" class="btn" type="button">🧭 בנה מסלול</button>
+      <button id="importBtn" class="btn" type="button">📥 ייבוא</button>
+    </section>
+
+    <section class="summary">
+      <div id="counts" class="counts"></div>
+      <div class="summary-row">
+        <label class="switch"><input id="hideDone" type="checkbox"> <span>הסתר בוצעו</span></label>
+        <label class="sort">מיון:
+          <select id="sortSel">
+            <option value="updated">מסלול מעודכן</option>
+            <option value="initial">מסלול ראשוני</option>
+            <option value="app">סדר אפליקציה</option>
+            <option value="drive">זמן נסיעה</option>
+            <option value="walk">זמן הליכה</option>
+            <option value="dist">מרחק</option>
+          </select>
+        </label>
+      </div>
+      <div id="locInfo" class="loc-info"></div>
+    </section>
+
+    <section id="nextStop" class="next-stop" hidden></section>
+
+    <button id="mapToggle" class="map-toggle" type="button" aria-expanded="false"><span>🗺️ מפה</span><span class="chev">הצג ▾</span></button>
+    <section id="mapWrap" class="map-wrap" hidden>
+      <div id="map"></div>
+      <div id="pickHint" class="pick-hint" hidden>לחץ על המפה כדי לסמן את מיקום הכתובת <button id="pickCancel" class="btn small" type="button">ביטול</button></div>
+    </section>
+
+    <div id="searchInfo" class="search-info" hidden></div>
+    <section id="list" class="list"></section>
+    <div id="empty" class="empty" hidden>
+      <p>אין משלוחים ליום הזה.</p>
+      <button class="btn primary" type="button" data-action="import">📥 ייבוא משלוחים</button>
+    </div>
+  </main>
+
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="brand big">Smart<span>Route</span></div>
+      <p>סביבת ניסוי – Google Route Optimization</p>
+      <button id="loginBtn" class="btn primary big" type="button">כניסה עם Google</button>
+      <p id="loginErr" class="err"></p>
+    </div>
+  </section>
+
+  <div id="loading" class="loading">טוען…</div>
+  <div id="modalRoot"></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
