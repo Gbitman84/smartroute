@@ -41,11 +41,13 @@ exports.optimizeRoute = onCall({ region: 'europe-west1', memory: '256MiB', timeo
     tx.set(qref, { requests: FieldValue.increment(1), shipments: FieldValue.increment(stops.length), updatedAt: Date.now() }, { merge: true });
   });
 
-  const now = Date.now();
+  // Route Optimization rejects fractional seconds ("nanos must be unset") – use whole-second timestamps.
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
   const body = {
     model: {
-      globalStartTime: new Date(now + 60 * 1000).toISOString(),
-      globalEndTime: new Date(now + 16 * 3600 * 1000).toISOString(),
+      globalStartTime: iso(now + 60 * 1000),
+      globalEndTime: iso(now + 16 * 3600 * 1000),
       shipments: stops.map((p, i) => ({
         label: String(i),
         deliveries: [{ arrivalWaypoint: { location: { latLng: latLng(p) }, sideOfRoad: true }, duration: `${Math.max(0, Math.min(1800, +serviceSeconds || 0))}s` }],
