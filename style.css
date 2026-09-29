@@ -248,3 +248,5 @@ table.preview tr.off td { opacity: .45; }
 .cmp-col h3 { margin: 0 0 6px; font-size: 13px; }
 .cmp-metric { font-size: 14px; margin-bottom: 6px; }
 .cmp-list { margin: 0; padding-inline-start: 20px; font-size: 12px; line-height: 1.5; }
+.badge.sinit { background: #7e22ce; font-size: 15px; }
+.badge.supd { background: #a855f7; }

@@ -72,7 +72,7 @@ async function firebaseBackend(config) {
     // Google Route Optimization through the optimizeRoute Cloud Function.
     async optimize(payload) {
       const f = await import(`${FB}/firebase-functions.js`);
-      const call = f.httpsCallable(f.getFunctions(app, appInfo?.functionsRegion || 'europe-west1'), 'optimizeRoute', { timeout: 70000 });
+      const call = f.httpsCallable(f.getFunctions(app, appInfo?.functionsRegion || 'europe-west1'), 'optimizeRoute', { timeout: 160000 });
       return (await call(payload)).data;
     },
   };

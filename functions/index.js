@@ -11,7 +11,7 @@ const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-pl
 
 const PROJECT = process.env.GCLOUD_PROJECT || 'smartrun-gbit';
 const ALLOWED_EMAILS = ['gbitman.bd@gmail.com'];
-const MAX_STOPS = 120;
+const MAX_STOPS = 300;             // unique addresses per build (a whole day is always optimized together)
 const DAILY_MAX_REQUESTS = 40;      // hard daily cap (Google has only per-minute quotas for this API)
 const DAILY_MAX_SHIPMENTS = 1500;
 
@@ -20,7 +20,7 @@ const secs = (d) => (d ? parseFloat(String(d).replace('s', '')) : 0);
 const latLng = (p) => ({ latitude: +p.lat, longitude: +p.lng });
 const validPoint = (p) => p && Number.isFinite(+p.lat) && Number.isFinite(+p.lng) && Math.abs(+p.lat) <= 90 && Math.abs(+p.lng) <= 180;
 
-exports.optimizeRoute = onCall({ region: 'europe-west1', memory: '256MiB', timeoutSeconds: 60, maxInstances: 2 }, async (req) => {
+exports.optimizeRoute = onCall({ region: 'europe-west1', memory: '256MiB', timeoutSeconds: 150, maxInstances: 2 }, async (req) => {
   const email = req.auth?.token?.email;
   if (!req.auth || !ALLOWED_EMAILS.includes(email)) throw new HttpsError('permission-denied', 'אין הרשאה');
 
@@ -60,7 +60,7 @@ exports.optimizeRoute = onCall({ region: 'europe-west1', memory: '256MiB', timeo
     },
     considerRoadTraffic: !!traffic,
     populatePolylines: true,
-    timeout: '25s',
+    timeout: stops.length > 80 ? '90s' : '30s',
   };
 
   const client = await auth.getClient();

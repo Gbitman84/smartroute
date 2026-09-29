@@ -16,7 +16,26 @@ const STATUS = {
   delivered_door:  { label: 'נמסר ליד הדלת',   icon: '🚪', final: true, cls: 'done' },
   no_answer_final: { label: 'לא ענה – סופי',   icon: '❌', final: true, cls: 'nofinal' },
 };
-const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 'google' : 'osm', googleKey: googleMapsKey || '', optimizer: 'google', serviceSeconds: 90, traffic: true };
+const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 'google' : 'osm', googleKey: googleMapsKey || '', optimizer: 'google', serviceSeconds: 90, traffic: true, routeMode: 'both' };
+// Two route engines, each with its own frozen "initial" and its own "updated" numbering.
+const F = {
+  osrm:   { init: 'initialStop', initSub: 'initialSub', upd: 'updatedStop', updSub: 'updatedSub', has: 'hasInitialRoute', line: 'routePolyline', dist: 'routeDistance', dur: 'routeDuration', built: 'initialBuiltAt' },
+  google: { init: 'smartInitialStop', initSub: 'smartInitialSub', upd: 'smartUpdatedStop', updSub: 'smartUpdatedSub', has: 'hasSmartInitial', line: 'smartPolyline', dist: 'smartDistance', dur: 'smartDuration', built: 'smartInitialBuiltAt' },
+};
+const MODE_LABEL = { regular: '🆓 רגיל', smart: '🧠 חכם (Google)', both: '⚖️ גם וגם' };
+const MODE_ENGINES = { regular: ['osrm'], smart: ['google'], both: ['google', 'osrm'] };
+function routeMode() {
+  if (S.day?.routeMode) return S.day.routeMode;
+  if (S.day?.hasSmartInitial) return S.day?.hasInitialRoute ? 'both' : 'smart';
+  return 'regular';
+}
+const showSmart = () => routeMode() !== 'regular';
+const showRegular = () => routeMode() !== 'smart';
+const primary = () => (showSmart() ? F.google : F.osrm);
+const updKey = (d) => orderKey(d[primary().upd], d[primary().updSub]);
+const updLabel = (d) => stopLabel(d[primary().upd], d[primary().updSub]);
+const initLabel = (d) => stopLabel(d[primary().init], d[primary().initSub]);
+const hasAnyRoute = () => !!(S.day?.hasInitialRoute || S.day?.hasSmartInitial);
 const ENGINE_LABEL = { google: '🧠 Google Route Optimization', osrm: '🆓 מנוע חינמי (OSRM)' };
 
 // ------------------------------------------------------------------ state
@@ -312,8 +331,7 @@ async function optimizeOrder(start, end, gList, engine = S.settings.optimizer) {
   return { engine: 'osrm', orderIdx, line };
 }
 
-async function buildRoute(kind, startSpec, endSpec) {
-  if (kind === 'initial' && S.day?.hasInitialRoute) throw new Error('המסלול הראשוני כבר נבנה ואינו משתנה');
+async function buildRoute(kind, startSpec, endSpec, mode = routeMode()) {
   const eligible = S.deliveries.filter((d) => isActive(d) && hasCoords(d));
   if (!eligible.length) throw new Error('אין כתובות פעילות מאותרות לבניית מסלול');
 
@@ -332,40 +350,46 @@ async function buildRoute(kind, startSpec, endSpec) {
     return { members, lat: members[0].lat, lng: members[0].lng };
   });
 
-  const { engine, orderIdx, line } = await optimizeOrder(start, end, gList);
-  const ordered = orderIdx.map((i) => gList[i]);
+  const patches = new Map();                       // shipmentId → merged patch
+  const put = (id, patch) => patches.set(id, { ...(patches.get(id) || {}), ...patch });
+  const dayPatch = { start, end: end || null, updatedBuiltAt: now() };
+  const done = [];
+  let effective = mode;
 
-  const updates = [];
-  const touched = new Set();
-  ordered.forEach((g, gi) => {
-    g.members.forEach((d, mi) => {
-      const stop = gi + 1, sub = g.members.length > 1 ? mi + 1 : null;
-      const patch = { updatedStop: stop, updatedSub: sub };
-      if (kind === 'initial') Object.assign(patch, { initialStop: stop, initialSub: sub });
-      updates.push({ id: d.shipmentId, patch });
-      touched.add(d.shipmentId);
+  for (const want of MODE_ENGINES[mode]) {
+    toast(`מחשב מסלול ${want === 'google' ? 'חכם (Google)' : 'רגיל'}…`, { ms: 0 });
+    const res = await optimizeOrder(start, end, gList, want);
+    if (want === 'google' && res.engine !== 'google') {
+      // Google unavailable: in "both" the regular engine still runs; in "smart" use the regular result as regular.
+      if (mode === 'both') { effective = S.day?.hasSmartInitial ? 'both' : 'regular'; continue; }
+      effective = 'regular';
+    }
+    const f = F[res.engine];
+    const isInitial = !S.day?.[f.has];
+    const touched = new Set();
+    res.orderIdx.map((i) => gList[i]).forEach((g, gi) => {
+      g.members.forEach((d, mi) => {
+        const stop = gi + 1, sub = g.members.length > 1 ? mi + 1 : null;
+        put(d.shipmentId, { [f.upd]: stop, [f.updSub]: sub, ...(isInitial ? { [f.init]: stop, [f.initSub]: sub } : {}) });
+        touched.add(d.shipmentId);
+      });
     });
-  });
-  for (const d of S.deliveries) {
-    if (!touched.has(d.shipmentId) && d.updatedStop != null) updates.push({ id: d.shipmentId, patch: { updatedStop: null, updatedSub: null } });
+    for (const d of S.deliveries) if (!touched.has(d.shipmentId) && d[f.upd] != null) put(d.shipmentId, { [f.upd]: null, [f.updSub]: null });
+    Object.assign(dayPatch, { [f.line]: res.line?.polyline || null, [f.dist]: res.line?.distance ?? null, [f.dur]: res.line?.duration ?? null });
+    if (isInitial) Object.assign(dayPatch, { [f.has]: true, [f.built]: now() });
+    done.push({ engine: res.engine, line: res.line, initial: isInitial, stops: gList.length });
+    if (mode === 'smart' && res.engine !== 'google') break;
   }
-  await S.db.updateMany(S.key, updates);
+  dayPatch.routeMode = effective;
+  if (dayPatch.hasInitialRoute || dayPatch.hasSmartInitial) dayPatch.initialBuiltAt ||= S.day?.initialBuiltAt || now();
 
-  const dayPatch = {
-    routeEngine: engine,
-    start, end: end || null,
-    routePolyline: line?.polyline || null,
-    routeDistance: line?.distance ?? null,
-    routeDuration: line?.duration ?? null,
-    updatedBuiltAt: now(),
-  };
-  if (kind === 'initial') Object.assign(dayPatch, { hasInitialRoute: true, initialBuiltAt: now() });
+  await S.db.updateMany(S.key, [...patches].map(([id, patch]) => ({ id, patch })));
   await S.db.saveDay(S.key, dayPatch);
 
   const skipped = S.deliveries.filter((d) => isActive(d) && !hasCoords(d)).length;
-  toast(`${kind === 'initial' ? 'מסלול ראשוני' : 'מסלול מעודכן'} (${engine === 'google' ? 'Google' : 'חינמי'}) נבנה: ${ordered.length} עצירות` +
-    (line ? ` · ${fmtDist(line.distance)} · ${fmtDur(line.duration)}` : '') +
-    (skipped ? ` · ${skipped} לא אותרו ולא נכללו` : ''), { ms: 6000 });
+  toast(done.map((r) => `${r.engine === 'google' ? '🧠 חכם' : '🆓 רגיל'} ${r.initial ? 'ראשוני' : 'מעודכן'}: ${r.line ? fmtDist(r.line.distance) + ' · ' + fmtDur(r.line.duration) : r.stops + ' עצירות'}`).join(' | ') +
+    (skipped ? ` · ${skipped} לא אותרו` : ''), { ms: 7000 });
+  return effective;
 }
 
 // ------------------------------------------------------------------ location & distances
@@ -445,6 +469,8 @@ function sorted(list) {
   const cmp = {
     updated: (a, b) => orderKey(a.updatedStop, a.updatedSub) - orderKey(b.updatedStop, b.updatedSub) || orderKey(a.initialStop, a.initialSub) - orderKey(b.initialStop, b.initialSub),
     initial: (a, b) => orderKey(a.initialStop, a.initialSub) - orderKey(b.initialStop, b.initialSub),
+    smartUpdated: (a, b) => orderKey(a.smartUpdatedStop, a.smartUpdatedSub) - orderKey(b.smartUpdatedStop, b.smartUpdatedSub) || orderKey(a.smartInitialStop, a.smartInitialSub) - orderKey(b.smartInitialStop, b.smartInitialSub),
+    smartInitial: (a, b) => orderKey(a.smartInitialStop, a.smartInitialSub) - orderKey(b.smartInitialStop, b.smartInitialSub),
     app: (a, b) => (a.appOrder ?? Infinity) - (b.appOrder ?? Infinity),
     drive: (a, b) => (dk(a, 'car', 't') ?? Infinity) - (dk(b, 'car', 't') ?? Infinity),
     walk: (a, b) => (dk(a, 'foot', 't') ?? Infinity) - (dk(b, 'foot', 't') ?? Infinity),
@@ -478,9 +504,11 @@ function card(d) {
   const c = el('article', { class: 'card ' + (fin ? doneCls : st.cls || ''), id: 'c-' + d.shipmentId });
 
   c.append(el('div', { class: 'card-top' },
-    badge('init', 'ראשוני', stopLabel(d.initialStop, d.initialSub)),
-    badge('upd', 'מעודכן', fin ? null : stopLabel(d.updatedStop, d.updatedSub)),
     badge('app', 'אפליקציה', d.appOrder != null ? '#' + d.appOrder : null),
+    showSmart() || S.day?.hasSmartInitial ? badge('sinit', 'חכם ראשוני', stopLabel(d.smartInitialStop, d.smartInitialSub)) : null,
+    showSmart() ? badge('supd', 'חכם מעודכן', fin ? null : stopLabel(d.smartUpdatedStop, d.smartUpdatedSub)) : null,
+    showRegular() || S.day?.hasInitialRoute ? badge('init', 'ראשוני', stopLabel(d.initialStop, d.initialSub)) : null,
+    showRegular() ? badge('upd', 'מעודכן', fin ? null : stopLabel(d.updatedStop, d.updatedSub)) : null,
     el('span', { class: 'ship' }, d.shipmentId),
   ));
   c.append(el('div', { class: 'name strike' }, d.name || '—'));
@@ -522,7 +550,7 @@ function card(d) {
 
 function nextStops() {
   const act = S.deliveries.filter(isActive);
-  const byRoute = act.slice().sort((a, b) => orderKey(a.updatedStop, a.updatedSub) - orderKey(b.updatedStop, b.updatedSub) || (a.appOrder ?? 1e9) - (b.appOrder ?? 1e9));
+  const byRoute = act.slice().sort((a, b) => updKey(a) - updKey(b) || (a.appOrder ?? 1e9) - (b.appOrder ?? 1e9));
   const next = byRoute[0] || null;
   let nearest = null;
   if (S.me) {
@@ -539,7 +567,8 @@ function renderNext() {
   if (!next || readonly()) { box.hidden = true; return; }
   box.hidden = false;
   box.replaceChildren(...[
-    el('div', { class: 'lbl' }, `העצירה הבאה · מסלול מעודכן ${stopLabel(next.updatedStop, next.updatedSub) ?? '—'} · ראשוני ${stopLabel(next.initialStop, next.initialSub) ?? '—'}`),
+    el('div', { class: 'lbl' }, `העצירה הבאה · ${showSmart() ? 'חכם ' : ''}מעודכן ${updLabel(next) ?? '—'} · ${showSmart() ? 'חכם ' : ''}ראשוני ${initLabel(next) ?? '—'}` +
+      (showSmart() && showRegular() ? ` · רגיל ${stopLabel(next.updatedStop, next.updatedSub) ?? '—'}` : '')),
     el('div', { class: 'who' }, next.name || '—'),
     el('div', { class: 'where' }, fullAddress(next)),
     el('div', { class: 'info' },
@@ -597,7 +626,8 @@ function renderCounts() {
   ].filter(Boolean));
   const parts = [];
   if (S.me) parts.push(`📍 מיקום עודכן ${fmtTime(S.me.at)} (±${Math.round(S.me.accuracy || 0)} מ׳)`);
-  if (S.day?.routeDistance) parts.push(`מסלול: ${fmtDist(S.day.routeDistance)} · ${fmtDur(S.day.routeDuration)}`);
+  if (showSmart() && S.day?.smartDistance) parts.push(`🧠 חכם: ${fmtDist(S.day.smartDistance)} · ${fmtDur(S.day.smartDuration)}`);
+  if (showRegular() && S.day?.routeDistance) parts.push(`🆓 רגיל: ${fmtDist(S.day.routeDistance)} · ${fmtDur(S.day.routeDuration)}`);
   $('#locInfo').textContent = parts.join(' · ');
 }
 
@@ -641,8 +671,11 @@ function renderMap() {
   if ($('#mapWrap').hidden || !S.map) return;
   const { line, stops, me } = S.layers;
   line.clearLayers(); stops.clearLayers(); me.clearLayers();
-  if (S.day?.routePolyline) {
-    try { L.polyline(decodePolyline(S.day.routePolyline), { color: '#2563eb', weight: 4, opacity: .7 }).addTo(line); } catch { /* ignore */ }
+  if (showRegular() && S.day?.routePolyline) {
+    try { L.polyline(decodePolyline(S.day.routePolyline), { color: '#2563eb', weight: 4, opacity: showSmart() ? .45 : .7, dashArray: showSmart() ? '6 8' : null }).addTo(line); } catch { /* ignore */ }
+  }
+  if (showSmart() && S.day?.smartPolyline) {
+    try { L.polyline(decodePolyline(S.day.smartPolyline), { color: '#9333ea', weight: 5, opacity: .75 }).addTo(line); } catch { /* ignore */ }
   }
   const groups = new Map();
   S.deliveries.filter(hasCoords).filter((d) => !(S.hideDone && isFinal(d))).forEach((d) => {
@@ -655,11 +688,11 @@ function renderMap() {
     const d = members[0];
     const act = members.filter(isActive);
     const ref = act[0] || d;
-    const label = act.length ? (ref.updatedStop ?? ref.initialStop ?? (ref.appOrder != null ? '#' + ref.appOrder : '?')) : '✓';
-    const cls = !act.length ? 'done' : act.some((x) => x.status === 'no_answer_temp') ? 'temp' : ref.updatedStop == null ? 'nonum' : '';
+    const label = act.length ? (ref[primary().upd] ?? ref[primary().init] ?? (ref.appOrder != null ? '#' + ref.appOrder : '?')) : '✓';
+    const cls = !act.length ? 'done' : act.some((x) => x.status === 'no_answer_temp') ? 'temp' : ref[primary().upd] == null ? 'nonum' : '';
     const icon = L.divIcon({ className: '', html: `<div class="stop-marker ${cls}">${esc(label)}${members.length > 1 ? '×' + members.length : ''}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] });
     const popup = `<div dir="rtl" style="font-family:Rubik,sans-serif"><b>${esc(fullAddress(d))}</b><br>` +
-      members.map((x) => `${esc(stopLabel(x.updatedStop, x.updatedSub) ?? '')} ${esc(x.name || x.shipmentId)} – ${esc(STATUS[x.status]?.label || '')}`).join('<br>') +
+      members.map((x) => `${esc(updLabel(x) ?? '')} ${esc(x.name || x.shipmentId)} – ${esc(STATUS[x.status]?.label || '')}`).join('<br>') +
       `<br><a href="${esc(wazeUrl(d))}" target="_blank">Waze</a> · <a href="${esc(gmapsUrl(d))}" target="_blank">Google</a></div>`;
     L.marker([d.lat, d.lng], { icon }).bindPopup(popup).addTo(stops);
     bounds.push([d.lat, d.lng]);
@@ -873,7 +906,8 @@ function previewSheet(rows) {
         if (ex) return addressKey(ex) === addressKey(base) ? base : { ...base, geoStatus: 'pending', lat: null, lng: null };
         return {
           ...base, status: 'pending', statusAt: null, history: [], geoStatus: 'pending', lat: null, lng: null,
-          initialStop: null, initialSub: null, updatedStop: null, updatedSub: null, importedAt: now(),
+          initialStop: null, initialSub: null, updatedStop: null, updatedSub: null,
+          smartInitialStop: null, smartInitialSub: null, smartUpdatedStop: null, smartUpdatedSub: null, importedAt: now(),
         };
       });
       if (!S.day) await S.db.saveDay(S.key, { date: S.date, version: S.version, createdAt: now(), hasInitialRoute: false });
@@ -931,7 +965,7 @@ function pointPicker(title, { allowNone }) {
 
 function routeSheet() {
   if (!S.deliveries.length) return toast('אין משלוחים – יש לייבא קודם', { err: true });
-  if (S.day?.hasInitialRoute) return routeChoiceSheet();
+  if (hasAnyRoute()) return routeChoiceSheet();
   routeBuildSheet('initial');
 }
 
@@ -940,7 +974,7 @@ function routeChoiceSheet() {
     const act = S.deliveries.filter(isActive).length;
     m.append(
       el('h2', {}, '🧭 כבר קיים מסלול'),
-      el('p', {}, `המסלול הראשוני נבנה ${S.day.initialBuiltAt ? 'ב-' + fmtTime(S.day.initialBuiltAt) : ''} ואינו משתנה. נשארו ${act} משלוחים פעילים.`),
+      el('p', {}, `המסלול הראשוני נבנה ${S.day.initialBuiltAt ? 'ב-' + fmtTime(S.day.initialBuiltAt) : ''} ואינו משתנה (${MODE_LABEL[routeMode()]}). נשארו ${act} משלוחים פעילים.`),
       el('div', { class: 'status-opts' },
         el('button', { class: 'btn primary', type: 'button', onclick: () => routeBuildSheet('updated') }, '🔄 בנה מסלול מעודכן (רק ממתין + לא ענה זמני)'),
         el('button', { class: 'btn', type: 'button', onclick: () => stayOnRouteSheet() }, '➡️ השאר את המסלול הקיים – מאיפה להמשיך?'),
@@ -957,10 +991,10 @@ async function stayOnRouteSheet() {
     if (!next) m.append(el('p', {}, 'אין משלוחים פעילים 🎉'));
     else {
       m.append(el('p', {}, 'העצירה הבאה לפי המסלול המעודכן:'),
-        el('p', {}, el('b', {}, `עצירה ${stopLabel(next.updatedStop, next.updatedSub) ?? '—'} (ראשוני ${stopLabel(next.initialStop, next.initialSub) ?? '—'})`), ` · ${next.name || ''} · ${fullAddress(next)}`),
+        el('p', {}, el('b', {}, `עצירה ${updLabel(next) ?? '—'} (ראשוני ${initLabel(next) ?? '—'})`), ` · ${next.name || ''} · ${fullAddress(next)}`),
         el('div', { class: 'sheet-actions' }, el('a', { class: 'btn waze', href: wazeUrl(next), target: '_blank', rel: 'noopener' }, 'נווט ב-Waze'), el('a', { class: 'btn gmaps', href: gmapsUrl(next), target: '_blank', rel: 'noopener' }, 'Google Maps')));
       if (nearest && nearest.shipmentId !== next.shipmentId) {
-        m.append(el('p', { class: 'muted' }, `📍 שים לב: הכי קרוב למיקום שלך עכשיו הוא ${nearest.name || ''} – ${fullAddress(nearest)} (עצירה ${stopLabel(nearest.updatedStop, nearest.updatedSub) ?? '—'}).`));
+        m.append(el('p', { class: 'muted' }, `📍 שים לב: הכי קרוב למיקום שלך עכשיו הוא ${nearest.name || ''} – ${fullAddress(nearest)} (עצירה ${updLabel(nearest) ?? '—'}).`));
       }
     }
     m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn', type: 'button', onclick: close }, 'סגור')));
@@ -980,13 +1014,29 @@ function routeBuildSheet(kind) {
       : `המסלול המעודכן כולל רק "ממתין" ו"לא ענה זמני": ${pool.length} משלוחים. המספור הראשוני נשאר.`));
     if (missing.length) m.append(el('div', { class: 'danger-box' }, `${missing.length} כתובות לא אותרו ולא ייכנסו למסלול: ${missing.map((d) => fullAddress(d)).join(' · ')}`));
     if (approx.length) m.append(el('p', { class: 'muted' }, `⚠️ ${approx.length} כתובות אותרו ברמת רחוב בלבד (מיקום משוער). כדי לדייק: ✎ ← "סמן על המפה", או הפעל איתור Google בהגדרות.`));
-    m.append(start.node, end.node);
+    // Engine choice: regular / smart / both.
+    const modeName = 'mode' + Math.random().toString(36).slice(2);
+    const curMode = S.day?.routeMode || S.settings.routeMode || 'both';
+    const modeBox = el('div', { class: 'radio-list' }, Object.entries(MODE_LABEL).map(([v, label]) => {
+      const r = el('input', { type: 'radio', name: modeName, value: v });
+      r.checked = v === curMode;
+      const hint = { regular: 'חינמי, בלי עומסי תנועה', smart: 'Google: תנועה אמיתית, צד הכביש, זמן עצירה', both: 'שניהם – להשוואה (עלות כמו חכם)' }[v];
+      return el('label', {}, r, el('span', {}, label, el('small', { class: 'muted', style: 'display:block' }, hint)));
+    }));
+    m.append(el('h3', {}, 'מנוע'), modeBox, start.node, end.node);
     const go = el('button', { class: 'btn primary', type: 'button' }, 'חשב מסלול');
     go.addEventListener('click', async () => {
       let s, e;
       try { s = start.get(); e = end.get(); } catch (err) { return toast(err.message, { err: true }); }
       go.disabled = true;
-      try { await buildRoute(kind, s, e); closeAll(); S.sort = 'updated'; prefs.set('sort', 'updated'); render(); }
+      const mode = modeBox.querySelector('input:checked').value;
+      try {
+        const eff = await buildRoute(kind, s, e, mode);
+        closeAll();
+        S.sort = eff === 'regular' ? 'updated' : 'smartUpdated'; prefs.set('sort', S.sort);
+        if (S.settings.routeMode !== mode) { S.settings.routeMode = mode; S.db.setMeta('settings', { routeMode: mode }).catch(() => {}); }
+        render();
+      }
       catch (err) { console.error(err); toast(err.message, { err: true, ms: 6000 }); go.disabled = false; }
     });
     m.append(el('div', { class: 'sheet-actions' }, go, el('button', { class: 'btn', type: 'button', onclick: close }, 'ביטול')));
@@ -1049,6 +1099,7 @@ async function moveActives(fromKey, toKey, items) {
   const to = parseKey(toKey);
   const docs = items.map((d) => ({
     ...d, initialStop: null, initialSub: null, updatedStop: null, updatedSub: null, movedTo: null,
+    smartInitialStop: null, smartInitialSub: null, smartUpdatedStop: null, smartUpdatedSub: null,
     movedFrom: fromKey, history: [...(d.history || []), { status: 'moved', at: now(), from: fromKey }].slice(-30),
   }));
   const target = await S.db.getDay(toKey);
@@ -1134,8 +1185,9 @@ async function maybePromptCarryOver() {
 
 // ------------------------------------------------------------------ export, segments, settings, menu
 function exportCsv() {
-  const head = ['מסלול ראשוני', 'מסלול מעודכן', 'סדר אפליקציה', 'מספר משלוח', 'שם', 'רחוב', 'מספר בית', 'עיר', "אס' 2", 'סטטוס', 'שעת סטטוס', 'איתור', 'lat', 'lng'];
+  const head = ['חכם ראשוני', 'חכם מעודכן', 'מסלול ראשוני', 'מסלול מעודכן', 'סדר אפליקציה', 'מספר משלוח', 'שם', 'רחוב', 'מספר בית', 'עיר', "אס' 2", 'סטטוס', 'שעת סטטוס', 'איתור', 'lat', 'lng'];
   const rows = S.deliveries.slice().sort((a, b) => orderKey(a.initialStop, a.initialSub) - orderKey(b.initialStop, b.initialSub)).map((d) => [
+    stopLabel(d.smartInitialStop, d.smartInitialSub) ?? '', stopLabel(d.smartUpdatedStop, d.smartUpdatedSub) ?? '',
     stopLabel(d.initialStop, d.initialSub) ?? '', stopLabel(d.updatedStop, d.updatedSub) ?? '', d.appOrder ?? '', d.shipmentId, d.name, d.street, d.houseNo, d.city, d.ref ?? '',
     d.movedTo ? 'הועבר ' + fmtKey(d.movedTo) : STATUS[d.status]?.label ?? '', d.statusAt ? new Date(d.statusAt).toLocaleString('he-IL') : '', d.geoStatus ?? '', d.lat ?? '', d.lng ?? '',
   ]);
@@ -1147,7 +1199,7 @@ function exportCsv() {
 function segmentsSheet() {
   const stops = [];
   const seen = new Set();
-  S.deliveries.filter(isActive).sort((a, b) => orderKey(a.updatedStop, a.updatedSub) - orderKey(b.updatedStop, b.updatedSub)).forEach((d) => {
+  S.deliveries.filter(isActive).sort((a, b) => updKey(a) - updKey(b)).forEach((d) => {
     const k = addressKey(d);
     if (!seen.has(k)) { seen.add(k); stops.push(d); }
   });
@@ -1215,7 +1267,8 @@ async function resetDay() {
   if (!ok) return;
   closeAll();
   await S.db.deleteDeliveries(S.key, S.deliveries.map((d) => d.shipmentId));
-  await S.db.saveDay(S.key, { hasInitialRoute: false, routePolyline: null, routeDistance: null, routeDuration: null, start: null, end: null, initialBuiltAt: null, updatedBuiltAt: null });
+  await S.db.saveDay(S.key, { hasInitialRoute: false, routePolyline: null, routeDistance: null, routeDuration: null, start: null, end: null, initialBuiltAt: null, updatedBuiltAt: null,
+    hasSmartInitial: false, smartPolyline: null, smartDistance: null, smartDuration: null, smartInitialBuiltAt: null, routeMode: null });
   S.dist = {};
   toast('היום אופס');
 }
@@ -1331,6 +1384,7 @@ async function boot() {
     return;
   }
   $('#demoBanner').hidden = S.db.mode !== 'demo';
+  if (S.db.mode === 'demo') window.__smartroute = S; // test hook (demo only)
   maps.configure({ usage: (kind) => S.db.incUsage(kind).catch(() => {}) });
 
   $('#loginBtn').addEventListener('click', async () => {
