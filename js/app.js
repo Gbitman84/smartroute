@@ -844,12 +844,28 @@ function parseImport(text) {
   });
 }
 
+const CLAUDE_PROMPT = `חלץ מצילומי המסך של אפליקציית המשלוחים טבלה מופרדת בטאבים (TSV) בתוך בלוק קוד אחד, בלי הסברים נוספים.
+שורת הכותרת בדיוק:
+סדר אפליקציה	מספר משלוח	שם	רחוב	מספר בית	עיר	אס 2
+כללים:
+- שורה לכל משלוח. מספר המשלוח הוא המספר הארוך ליד אייקון המשאית (למשל 19828497).
+- "סדר אפליקציה" = המספר אחרי # בשורת "יעד" (למשל #14 → 14). אם אין מספר (למשל כוכבית *) – כתוב 0. אף תא לא נשאר ריק בעמודה הזו.
+- הכתובת בשורת "יעד" בנויה כך: "חולון שנקר 72" → עיר = המילה הראשונה (חולון), אחריה הרחוב, ובסוף מספר הבית.
+- "אס 2" = הערך אחרי "אס' 2:". אם אין – כתוב 0.
+- צילומים חופפים לעיתים – אל תכפיל אותו מספר משלוח.
+- שמור את השמות בדיוק כפי שכתובים (עברית/אנגלית).
+- בסוף, מתחת לבלוק, כתוב כמה שורות יש ואם חסרים מספרי # ברצף.`;
+
 function importSheet() {
   openModal((m, close) => {
     const ta = el('textarea', { placeholder: 'הדבק כאן את הטבלה (שורה לכל משלוח, עמודות מופרדות בטאב)…\nסדר אפליקציה | מספר משלוח | שם | רחוב | מס׳ בית | עיר | אס׳ 2' });
     m.append(
       el('h2', {}, '📥 ייבוא משלוחים'),
-      el('p', { class: 'muted' }, 'הדבק את הטבלה שקיבלת מ-Claude (או מ-Excel). אפשר גם עמודת "כתובת" אחת במקום רחוב + מספר.'),
+      el('p', { class: 'muted' }, 'הדבק את הטבלה שקיבלת מ-Claude (או מ-Excel). אפשר גם עמודת "כתובת" אחת במקום רחוב + מספר. 0 = אין סדר אפליקציה.'),
+      el('button', { class: 'btn small', type: 'button', onclick: async () => {
+        try { await navigator.clipboard.writeText(CLAUDE_PROMPT); toast('ההוראות הועתקו – הדבק אותן ב-Claude יחד עם הצילומים ✓'); }
+        catch { ta.value = CLAUDE_PROMPT; ta.select(); toast('סמן והעתק את ההוראות מהתיבה', { ms: 4000 }); }
+      } }, '📋 העתק הוראות ל-Claude'),
       el('label', { class: 'field' }, 'נתונים', ta),
       el('div', { class: 'sheet-actions' },
         el('button', { class: 'btn primary', type: 'button', onclick: () => { const rows = parseImport(ta.value); if (!rows.length) return toast('לא נמצאו שורות', { err: true }); previewSheet(rows); } }, 'הצג תצוגה מקדימה ←'),
@@ -906,7 +922,7 @@ function previewSheet(rows) {
           shipmentId: r.shipmentId, name: r.name, street: r.street, houseNo: r.houseNo,
           city: r.city || S.settings.defaultCity,
           appOrder: r.appOrder === '' ? null : parseInt(r.appOrder.replace('#', ''), 10) || null,
-          ref: r.ref || null,
+          ref: r.ref && r.ref !== '0' ? r.ref : null,
         };
         const ex = existing.get(r.shipmentId);
         if (ex) return addressKey(ex) === addressKey(base) ? base : { ...base, geoStatus: 'pending', lat: null, lng: null };
