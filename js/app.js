@@ -395,7 +395,16 @@ async function buildRoute(kind, startSpec, endSpec, mode = routeMode()) {
 // ------------------------------------------------------------------ location & distances
 function setMe(p) {
   S.me = p;
+  reportLocation(p);
   renderMap();
+}
+
+// Last known location for the admin panel – at most once a minute, only when the app already has a fix.
+let lastLocSave = 0;
+function reportLocation(p) {
+  if (!S.user || S.blocked || now() - lastLocSave < 60000) return;
+  lastLocSave = now();
+  S.db.saveProfile({ lastLocation: { lat: p.lat, lng: p.lng, accuracy: Math.round(p.accuracy || 0), at: p.at || now() } }).catch(() => {});
 }
 
 async function refreshLocation() {
@@ -437,9 +446,12 @@ async function refreshLocation() {
 // ------------------------------------------------------------------ status
 async function setStatus(d, status) {
   if (readonly()) return;
-  const history = [...(d.history || []), { status, at: now() }].slice(-30);
+  // Where the status was set (if the location is fresh) – shown on the admin panel map.
+  const here = S.me && now() - S.me.at < 5 * 60000 ? { lat: S.me.lat, lng: S.me.lng } : {};
+  const history = [...(d.history || []), { status, at: now(), ...here }].slice(-30);
   await S.db.updateDelivery(S.key, d.shipmentId, { status, statusAt: now(), history });
   if (STATUS[status].final) toast(`${d.name || d.shipmentId}: ${STATUS[status].label}`);
+  getCurrentPosition().then(setMe).catch(() => {}); // keep the last location fresh, no continuous tracking
 }
 
 function statusSheet(d) {
@@ -1273,6 +1285,7 @@ async function settingsSheet() {
       el('label', { class: 'switch', style: 'margin-top:10px' }, traffic, el('span', {}, 'להתחשב בעומסי תנועה (Google)')),
       el('p', { class: 'usage' }, `שימוש ב-Google החודש: ${usage?.geocode || 0} איתורים (חינם עד 10,000) · ${usage?.routeoptRequests || 0} חישובי מסלול, ${usage?.routeoptShipments || 0} משלוחים (חינם עד 5,000).`),
       el('p', { class: 'muted' }, S.db.mode === 'firebase' ? `מחובר כ: ${S.user.email || S.user.name}` : 'מצב הדגמה – הנתונים בדפדפן הזה בלבד.'),
+      el('p', { class: 'muted' }, 'מנהל המערכת רואה את מצב המשלוחים שלך ואת המיקום האחרון שנקלט באפליקציה (ברענון מיקום ובעדכון סטטוס בלבד).'),
     );
     const save = async () => {
       const next = { defaultCity: city.value.trim() || 'חולון', geocoder: geocoder.value, googleKey: key.value.trim(), optimizer: optimizer.value, serviceSeconds: Math.max(0, Math.min(1800, +service.value || 0)), traffic: traffic.checked };
@@ -1375,13 +1388,28 @@ function subscribe() {
   }, (e) => toast('שגיאת חיבור לענן: ' + e.message, { err: true, ms: 8000 })));
 }
 
-// Keep day doc counters (total/active) in sync – used by the history list.
+// Keep day doc counters in sync – total/active for the history list, stats for the admin panel.
+// stats ignore deliveries moved to another day (they are counted there).
+function dayStats() {
+  const live = S.deliveries.filter((d) => !d.movedTo);
+  const count = (...st) => live.filter((d) => st.includes(d.status)).length;
+  const doneAt = live.filter((d) => STATUS[d.status]?.final && d.statusAt).map((d) => d.statusAt);
+  const delivered = count('delivered_hand', 'delivered_door'), noAnswer = count('no_answer_final'), temp = count('no_answer_temp');
+  return {
+    total: live.length, delivered, noAnswer, temp, pending: live.length - delivered - noAnswer - temp,
+    moved: S.deliveries.length - live.length,
+    firstDoneAt: doneAt.length ? Math.min(...doneAt) : null, lastDoneAt: doneAt.length ? Math.max(...doneAt) : null,
+  };
+}
+
 function syncSummary() {
   const total = S.deliveries.length;
   const active = S.deliveries.filter(isActive).length;
   if (!total && !S.day) return;
-  if (S.day?.total === total && S.day?.active === active) return;
-  S.db.saveDay(S.key, { date: S.date, version: S.version, total, active }).catch(() => {});
+  const stats = dayStats();
+  const same = S.day?.stats && Object.keys(stats).every((k) => (S.day.stats[k] ?? null) === stats[k]);
+  if (S.day?.total === total && S.day?.active === active && same) return;
+  S.db.saveDay(S.key, { date: S.date, version: S.version, total, active, stats }).catch(() => {});
 }
 
 function bindUi() {
@@ -1414,8 +1442,20 @@ function bindUi() {
   });
 }
 
+// The admin disabled this account: the data is locked by firestore.rules, so just explain.
+function setBlocked(blocked) {
+  const was = S.blocked;
+  S.blocked = blocked;
+  $('#blocked').hidden = !blocked;
+  $('#app').hidden = blocked || !S.user;
+  $('#searchBar').hidden = blocked || !S.user;
+  if (was && !blocked) location.reload(); // re-enabled: listeners were cut off, start fresh
+}
+
 async function boot() {
   bindUi();
+  $('#blockedLogout').addEventListener('click', () => S.db.signOut());
+  $('#blockedReload').addEventListener('click', () => location.reload());
   try {
     S.db = await createDb();
   } catch (e) {
@@ -1437,7 +1477,10 @@ async function boot() {
     $('#login').hidden = !!user;
     $('#app').hidden = !user;
     $('#searchBar').hidden = !user;
-    if (!user) { S.unsubs.forEach((u) => u()); S.unsubs = []; return; }
+    S.accessUnsub?.(); S.accessUnsub = null;
+    if (!user) { setBlocked(false); S.unsubs.forEach((u) => u()); S.unsubs = []; return; }
+    S.accessUnsub = S.db.watchAccess((acc) => setBlocked(acc?.disabled === true));
+    S.db.touchProfile(user).catch(() => {});
     const saved = await S.db.getMeta('settings').catch(() => null);
     S.settings = { ...DEFAULT_SETTINGS, ...(saved || {}) };
     if (!S.settings.googleKey) S.settings.googleKey = DEFAULT_SETTINGS.googleKey;

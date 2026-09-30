@@ -69,6 +69,17 @@ async function firebaseBackend(config) {
     async getGeo(key) { const s = await fs.getDoc(fs.doc(...u('geocache', safeId(key)))); return s.exists() ? s.data() : null; },
     setGeo: (key, val) => fs.setDoc(fs.doc(...u('geocache', safeId(key))), val),
     incUsage: (kind, n = 1) => fs.setDoc(fs.doc(...u('meta', 'usage-' + monthKey())), { [kind]: fs.increment(n), month: monthKey() }, { merge: true }),
+
+    // Profile (the root <dataRoot>/{uid} doc) – read by the admin panel: who, last seen, last location.
+    async touchProfile(user) {
+      const ref = fs.doc(db, appInfo?.dataRoot || 'users', uid);
+      const cur = await fs.getDoc(ref).catch(() => null);
+      const firstSeen = cur?.exists() ? cur.data().firstSeen : null;
+      return fs.setDoc(ref, { uid, name: user.name || '', email: user.email || '', photo: user.photo || '', app: appInfo?.name || 'SmartRoute', lastSeen: Date.now(), firstSeen: firstSeen || Date.now() }, { merge: true });
+    },
+    saveProfile: (patch) => fs.setDoc(fs.doc(db, appInfo?.dataRoot || 'users', uid), { ...patch, lastSeen: Date.now() }, { merge: true }),
+    // Enabled/disabled flag set by the admin. Errors (e.g. older rules) count as enabled.
+    watchAccess: (cb) => fs.onSnapshot(fs.doc(db, 'access', uid), (s) => cb(s.exists() ? s.data() : null), () => cb(null)),
     // Google Route Optimization through the optimizeRoute Cloud Function.
     async optimize(payload) {
       const f = await import(`${FB}/firebase-functions.js`);
@@ -120,6 +131,8 @@ function demoBackend() {
     getGeo: async (key) => st.geo[key] || null,
     setGeo: async (key, val) => { st.geo[key] = val; save(); },
     incUsage: async (kind, n = 1) => { const k = 'usage-' + monthKey(); st.meta[k] ||= { month: monthKey() }; st.meta[k][kind] = (st.meta[k][kind] || 0) + n; save(); },
+    touchProfile: async () => {}, saveProfile: async () => {},
+    watchAccess: (cb) => { setTimeout(() => cb(null), 0); return () => {}; },
   };
 }
 

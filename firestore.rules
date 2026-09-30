@@ -1,13 +1,35 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+
+    // SmartRoute Admin panel: may read every user's data and enable/disable users.
+    function isAdmin() {
+      return signedIn() && request.auth.token.email_verified == true
+        && request.auth.token.email in ['gbitman.bd@gmail.com'];
+    }
+
+    // A user the admin disabled (access/{uid}.disabled == true) loses access to their own data.
+    function enabled() {
+      return !exists(/databases/$(database)/documents/access/$(request.auth.uid))
+        || get(/databases/$(database)/documents/access/$(request.auth.uid)).data.get('disabled', false) != true;
+    }
+    function owner(uid) { return signedIn() && request.auth.uid == uid && enabled(); }
+
     // SmartRun (production): each signed-in user can read/write only their own data.
     match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if owner(uid);
+      allow read: if isAdmin();
     }
     // SmartRoute (lab): separate data area, same rule.
     match /labUsers/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if owner(uid);
+      allow read: if isAdmin();
+    }
+    // Enabled/disabled flag per user – written only by the admin, readable by the user it belongs to.
+    match /access/{uid} {
+      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
+      allow write: if isAdmin();
     }
     // quota/* is written only by the Cloud Function (admin SDK); no client access.
   }
