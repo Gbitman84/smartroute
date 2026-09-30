@@ -263,3 +263,5 @@ table.preview tr.off td { opacity: .45; }
 .ref-main { margin-inline-start: auto; font-size: 12px; color: var(--primary); font-weight: 700; }
 .ref-url { font-size: 12px; color: var(--muted); word-break: break-all; text-align: left; margin: 4px 0; }
 .ref-opt { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+/* Not signed in to the app (login / loading / "user doesn't exist" / disabled): no menu or date button. */
+body:has(#app[hidden]) #menuBtn, body:has(#app[hidden]) #dayBtn { display: none; }
