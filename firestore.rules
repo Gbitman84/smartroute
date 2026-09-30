@@ -16,20 +16,8 @@ service cloud.firestore {
     // ADMIN: role set by the superadmin. Admins may use the admin panel but cannot give admin.
     function isAdmin() { return isSuper() || (isMember() && me().get('role', 'user') == 'admin'); }
 
-    // ---------------------------------------------------------------- SmartRun (archive)
-    // A user disabled in access/{uid} loses access to their SmartRun data.
-    function enabled() {
-      return !exists(/databases/$(database)/documents/access/$(request.auth.uid))
-        || get(/databases/$(database)/documents/access/$(request.auth.uid)).data.get('disabled', false) != true;
-    }
-    match /users/{uid}/{document=**} {
-      allow read, write: if signedIn() && request.auth.uid == uid && enabled();
-      allow read: if isAdmin();
-    }
-    match /access/{uid} {
-      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
-      allow write: if isSuper();
-    }
+    // Only SmartRoute paths are listed; everything else (including the old SmartRun users/* and access/*)
+    // is denied to every client.
 
     // ---------------------------------------------------------------- SmartRoute data
     match /labUsers/{uid}/{document=**} {

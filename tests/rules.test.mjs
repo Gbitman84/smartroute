@@ -55,7 +55,8 @@ async function seed() {
       await setDoc(doc(db, 'labUsers', uid, 'days', DAY), { date: DAY, key: DAY, total: 1 });
       await setDoc(doc(db, 'labUsers', uid, 'days', DAY, 'deliveries', 'd1'), { shipmentId: 'd1', status: 'pending' });
     }
-    await setDoc(doc(db, 'users', 'u1'), { name: 'u1' }); // SmartRun archive
+    await setDoc(doc(db, 'users', 'u1'), { name: 'u1' }); // old SmartRun data – must be unreachable
+    await setDoc(doc(db, 'access', 'u1'), { disabled: false });
     await setDoc(doc(db, 'registrations', 'r1'), { ...reg(), createdAt: new Date() });
     await setDoc(doc(db, 'config', 'limits'), { roles: { user: { routeOpt: 40, scanReads: 120 } }, global: { routeOpt: 40, scanReads: 120 } });
     await setDoc(doc(db, 'quota', `routeopt-${DAY}`), { requests: 1 });
@@ -103,10 +104,11 @@ await t('labUsers', 'user deletes own delivery', 'allow', () => deleteDoc(lab(fs
 await t('labUsers', 'admin lists all profiles', 'allow', () => getDocs(collection(fsAs(P.adA), 'labUsers')));
 await t('labUsers', 'user lists all profiles', 'deny', () => getDocs(collection(fsAs(P.u1), 'labUsers')));
 
-// ---------------------------------------------------------------- SmartRun archive
-await t('users (SmartRun)', 'owner reads own', 'allow', () => getDoc(doc(fsAs(P.u1), 'users', 'u1')));
-await t('users (SmartRun)', 'admin reads', 'allow', () => getDoc(doc(fsAs(P.adA), 'users', 'u1')));
-await t('users (SmartRun)', 'other user reads', 'deny', () => getDoc(doc(fsAs(P.u2), 'users', 'u1')));
+// ---------------------------------------------------------------- old SmartRun paths: closed to everyone
+await t('old SmartRun paths', 'owner reads users/own', 'deny', () => getDoc(doc(fsAs(P.u1), 'users', 'u1')));
+await t('old SmartRun paths', 'owner writes users/own', 'deny', () => setDoc(doc(fsAs(P.u1), 'users', 'u1'), { name: 'x' }));
+await t('old SmartRun paths', 'superadmin reads users/*', 'deny', () => getDoc(doc(fsAs(P.sa), 'users', 'u1')));
+await t('old SmartRun paths', 'superadmin reads access/*', 'deny', () => getDoc(doc(fsAs(P.sa), 'access', 'u1')));
 
 // ---------------------------------------------------------------- members: joining with a magic link
 await t('members/join', 'join with an active link', 'allow', () => setDoc(doc(asNew(), 'members', 'nw'), join()));

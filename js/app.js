@@ -118,7 +118,7 @@ function openModal(build, { onClose } = {}) {
   build(sheet, close);
   root.append(overlay);
   modalStack.push(entry);
-  history.pushState({ smartrun: 'modal' }, '');
+  history.pushState({ smartroute: 'modal' }, '');
   histDepth++;
   return close;
 }
@@ -131,7 +131,7 @@ function closeAll() {
 
 function showExitPrompt() {
   if ($('#exitPrompt')) return;
-  const stay = () => { box.remove(); history.pushState({ smartrun: 'guard' }, ''); };
+  const stay = () => { box.remove(); history.pushState({ smartroute: 'guard' }, ''); };
   const box = el('div', { class: 'overlay', id: 'exitPrompt' }, el('div', { class: 'sheet' },
     el('h2', {}, 'לצאת מ-SmartRoute?'),
     el('p', { class: 'muted' }, 'כל הנתונים שמורים בענן. לחיצה נוספת על "חזרה" בטלפון תסגור את האפליקציה.'),
@@ -151,7 +151,7 @@ function onPopState() {
     modalStack[modalStack.length - 1].remove();
     return;
   }
-  history.pushState({ smartrun: 'guard' }, '');
+  history.pushState({ smartroute: 'guard' }, '');
   if (S.pickFor) { S.pickFor = null; $('#pickHint').hidden = true; return; }
   if (S.search) { setSearch(''); return; }
   showExitPrompt();
@@ -865,7 +865,7 @@ function parseImport(text) {
   });
 }
 
-const CLAUDE_PROMPT = `אתה ממיר צילומי מסך מאפליקציית משלוחים לטבלה לייבוא ל-SmartRun.
+const CLAUDE_PROMPT = `אתה ממיר צילומי מסך מאפליקציית משלוחים לטבלה לייבוא ל-SmartRoute.
 
 פלט: בלוק קוד אחד בלבד, טבלה מופרדת בטאבים (TSV), 7 עמודות בכל שורה – בלי הסברים לפני הבלוק.
 שורת כותרת בדיוק:
@@ -2303,8 +2303,8 @@ function bindUi() {
   $('#searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
   $('#searchClear').addEventListener('click', () => { setSearch(''); $('#searchInput').focus(); });
   window.addEventListener('popstate', onPopState);
-  history.replaceState({ smartrun: 'root' }, '');
-  history.pushState({ smartrun: 'guard' }, '');
+  history.replaceState({ smartroute: 'root' }, '');
+  history.pushState({ smartroute: 'guard' }, '');
   $('#pickCancel').addEventListener('click', () => { S.pickFor = null; $('#pickHint').hidden = true; });
   $('#hideDone').addEventListener('change', (e) => { S.hideDone = e.target.checked; prefs.set('hideDone', S.hideDone); render(); });
   $('#sortSel').addEventListener('change', (e) => {

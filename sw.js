@@ -1,4 +1,4 @@
-// App-shell cache so SmartRun opens even with weak reception.
+// App-shell cache so SmartRoute opens even with weak reception.
 // Network-first for everything: fresh code when online, cached copy when offline.
 // Data itself is synced by Firestore's own offline cache.
 const CACHE = 'smartroute-shell-v1';

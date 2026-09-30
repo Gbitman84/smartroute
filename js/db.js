@@ -3,6 +3,7 @@
 import { firebaseConfig, appInfo } from './firebase-config.js';
 
 const FB = 'https://www.gstatic.com/firebasejs/10.12.2';
+const ROOT = appInfo?.dataRoot || 'labUsers';   // SmartRoute user data: labUsers/{uid}/...
 const safeId = (s) => String(s).replace(/\//g, '_').slice(0, 700);
 const monthKey = () => new Date().toISOString().slice(0, 7);
 
@@ -27,7 +28,7 @@ async function firebaseBackend(config) {
     window.__emuSignIn = (email, password) => auth.signInWithEmailAndPassword(a, email, password);
   }
   let uid = null;
-  const u = (...p) => [db, appInfo?.dataRoot || 'users', uid, ...p];
+  const u = (...p) => [db, ROOT, uid, ...p];
   const dayRef = (date) => fs.doc(...u('days', date));
   const delCol = (date) => fs.collection(...u('days', date, 'deliveries'));
   const delRef = (date, id) => fs.doc(...u('days', date, 'deliveries', safeId(id)));
@@ -81,12 +82,12 @@ async function firebaseBackend(config) {
 
     // Profile (the root <dataRoot>/{uid} doc) – read by the admin panel: who, last seen, last location.
     async touchProfile(user) {
-      const ref = fs.doc(db, appInfo?.dataRoot || 'users', uid);
+      const ref = fs.doc(db, ROOT, uid);
       const cur = await fs.getDoc(ref).catch(() => null);
       const firstSeen = cur?.exists() ? cur.data().firstSeen : null;
       return fs.setDoc(ref, { uid, name: user.name || '', email: user.email || '', photo: user.photo || '', app: appInfo?.name || 'SmartRoute', lastSeen: Date.now(), firstSeen: firstSeen || Date.now() }, { merge: true });
     },
-    saveProfile: (patch) => fs.setDoc(fs.doc(db, appInfo?.dataRoot || 'users', uid), { ...patch, lastSeen: Date.now() }, { merge: true }),
+    saveProfile: (patch) => fs.setDoc(fs.doc(db, ROOT, uid), { ...patch, lastSeen: Date.now() }, { merge: true }),
     // Membership (members/{uid}): invite-only sign-up, role, enabled/disabled – see js/members.js.
     async getMember() { const s = await fs.getDoc(fs.doc(db, 'members', uid)); return s.exists() ? s.data() : null; },
     watchMember: (cb) => fs.onSnapshot(fs.doc(db, 'members', uid), (s) => cb(s.exists() ? s.data() : null), () => {}),
@@ -115,7 +116,7 @@ async function firebaseBackend(config) {
     // Screenshot import: photos live in Storage for 14 days, Claude reads them via extractShipments.
     async uploadImportPhoto(importId, n, blob) {
       const st = await storage();
-      const path = `${appInfo?.dataRoot || 'users'}/${uid}/imports/${importId}/${n}.jpg`;
+      const path = `${ROOT}/${uid}/imports/${importId}/${n}.jpg`;
       await st.uploadBytes(st.ref(st.getStorage(app), path), blob, { contentType: blob.type || 'image/jpeg' });
       return path;
     },

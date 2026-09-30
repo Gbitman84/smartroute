@@ -1,5 +1,5 @@
 {
-  "at": "2026-09-30T10:34:41.402Z",
+  "at": "2026-09-30T14:28:33.420Z",
   "results": [
     {
       "area": "labUsers",
@@ -128,22 +128,29 @@
       "error": ""
     },
     {
-      "area": "users (SmartRun)",
-      "name": "owner reads own",
-      "expect": "allow",
+      "area": "old SmartRun paths",
+      "name": "owner reads users/own",
+      "expect": "deny",
       "pass": true,
       "error": ""
     },
     {
-      "area": "users (SmartRun)",
-      "name": "admin reads",
-      "expect": "allow",
+      "area": "old SmartRun paths",
+      "name": "owner writes users/own",
+      "expect": "deny",
       "pass": true,
       "error": ""
     },
     {
-      "area": "users (SmartRun)",
-      "name": "other user reads",
+      "area": "old SmartRun paths",
+      "name": "superadmin reads users/*",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "old SmartRun paths",
+      "name": "superadmin reads access/*",
       "expect": "deny",
       "pass": true,
       "error": ""

@@ -8,9 +8,9 @@ function load(key) {
   if (window.google?.maps?.Geocoder) return Promise.resolve();
   if (loading) return loading;
   loading = new Promise((resolve, reject) => {
-    window.__smartrunGmapsReady = () => resolve();
+    window.__smartrouteGmapsReady = () => resolve();
     const s = document.createElement('script');
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&language=iw&region=IL&loading=async&callback=__smartrunGmapsReady`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&language=iw&region=IL&loading=async&callback=__smartrouteGmapsReady`;
     s.async = true;
     s.onerror = () => { loading = null; reject(new Error('טעינת Google Maps נכשלה')); };
     document.head.append(s);
