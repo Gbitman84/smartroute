@@ -818,6 +818,9 @@ const COLS = [
 ];
 
 function parseImport(text) {
+  // A whole Claude answer pasted (``` block + report) → only the block.
+  const fence = String(text).match(/```[^\n]*\n([\s\S]*?)```/);
+  if (fence) text = fence[1];
   // Trim spaces only – a leading TAB means the first column (app order) is empty and must stay.
   let lines = text.split(/\r?\n/).map((l) => l.replace(/^ +| +$/g, '')).filter((l) => l.trim());
   lines = lines.filter((l) => !/^\|?\s*:?-{2,}/.test(l)); // markdown separator
@@ -921,6 +924,17 @@ function textPane(close) {
       catch { ta.value = CLAUDE_PROMPT; ta.select(); toast('סמן והעתק את ההוראות מהתיבה', { ms: 4000 }); }
     } }, '📋 העתק הוראות ל-Claude'),
     el('label', { class: 'field' }, 'נתונים', ta),
+    el('button', { class: 'btn', type: 'button', onclick: async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text.trim()) return toast('אין טקסט להדבקה – העתק קודם את הטבלה מ-Claude', { err: true });
+        ta.value = text;
+        toast('הודבק ✓');
+      } catch {
+        ta.focus();
+        toast('לחץ לחיצה ארוכה בתיבה ← הדבק', { ms: 4000 });
+      }
+    } }, '📥 הדבק'),
     el('div', { class: 'sheet-actions' },
       el('button', { class: 'btn primary', type: 'button', onclick: () => { const rows = parseImport(ta.value); if (!rows.length) return toast('לא נמצאו שורות', { err: true }); previewSheet(rows); } }, 'הצג תצוגה מקדימה ←'),
       el('button', { class: 'btn', type: 'button', onclick: close }, 'ביטול'),
