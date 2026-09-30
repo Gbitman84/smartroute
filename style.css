@@ -113,6 +113,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .next-stop .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .next-stop .alt { font-size: 13px; opacity: .9; margin-top: 6px; }
 
+.text-tools { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .map-bar { position: relative; margin: 10px 16px 0; }
 .map-toggle {
   display: flex; justify-content: space-between; align-items: center; width: 100%; margin: 0; padding-left: 58px !important;

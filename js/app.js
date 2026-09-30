@@ -937,22 +937,20 @@ function textPane(close) {
   const ta = el('textarea', { placeholder: 'הדבק כאן את הטבלה (שורה לכל משלוח, עמודות מופרדות בטאב)…\nסדר אפליקציה | מספר משלוח | שם | רחוב | מס׳ בית | עיר | אס׳ 2' });
   return el('div', {},
     el('p', { class: 'muted' }, 'הדבק את הטבלה שקיבלת מ-Claude (או מ-Excel). אפשר גם עמודת "כתובת" אחת במקום רחוב + מספר. 0 = אין סדר אפליקציה.'),
-    el('button', { class: 'btn small', type: 'button', onclick: async () => {
-      try { await navigator.clipboard.writeText(CLAUDE_PROMPT); toast('ההוראות הועתקו – הדבק אותן ב-Claude יחד עם הצילומים ✓'); }
-      catch { ta.value = CLAUDE_PROMPT; ta.select(); toast('סמן והעתק את ההוראות מהתיבה', { ms: 4000 }); }
-    } }, '📋 העתק הוראות ל-Claude'),
+    el('div', { class: 'text-tools' },
+      el('button', { class: 'btn small', type: 'button', onclick: async () => {
+        try { await navigator.clipboard.writeText(CLAUDE_PROMPT); toast('ההוראות הועתקו – הדבק אותן ב-Claude יחד עם הצילומים ✓'); }
+        catch { ta.value = CLAUDE_PROMPT; ta.select(); toast('סמן והעתק את ההוראות מהתיבה', { ms: 4000 }); }
+      } }, '📋 העתק הוראות ל-Claude'),
+      // Paste: puts the copied text into the box (the browser may ask once to allow clipboard access).
+      el('button', { class: 'btn small', type: 'button', onclick: async () => {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (!text.trim()) return toast('אין טקסט בלוח – העתק קודם את הטבלה מ-Claude', { err: true });
+          ta.value = text;
+        } catch { ta.focus(); toast('הדפדפן חסם גישה ללוח – אשר גישה ונסה שוב', { err: true }); }
+      } }, '📥 הדבק')),
     el('label', { class: 'field' }, 'נתונים', ta),
-    el('button', { class: 'btn', type: 'button', onclick: async () => {
-      try {
-        const text = await navigator.clipboard.readText();
-        if (!text.trim()) return toast('אין טקסט להדבקה – העתק קודם את הטבלה מ-Claude', { err: true });
-        ta.value = text;
-        toast('הודבק ✓');
-      } catch {
-        ta.focus();
-        toast('לחץ לחיצה ארוכה בתיבה ← הדבק', { ms: 4000 });
-      }
-    } }, '📥 הדבק'),
     el('div', { class: 'sheet-actions' },
       el('button', { class: 'btn primary', type: 'button', onclick: () => { const rows = parseImport(ta.value); if (!rows.length) return toast('לא נמצאו שורות', { err: true }); previewSheet(rows); } }, 'הצג תצוגה מקדימה ←'),
       el('button', { class: 'btn', type: 'button', onclick: close }, 'ביטול'),
