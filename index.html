@@ -78,11 +78,26 @@
   </main>
 
   <section id="login" class="login" hidden>
+    <a class="btn small reg-link" href="Registration.html">📝 הרשמה</a>
     <div class="login-card">
       <div class="brand big">Smart<span>Route</span></div>
       <p>סביבת ניסוי – Google Route Optimization</p>
+      <p id="inviteNote" class="invite-note" hidden>🎉 קיבלת הזמנה להצטרף ל-SmartRoute.<br>התחבר עם חשבון Google כדי להשלים את ההרשמה.</p>
       <button id="loginBtn" class="btn primary big" type="button">כניסה עם Google</button>
       <p id="loginErr" class="err"></p>
+    </div>
+  </section>
+
+  <section id="noUser" class="login" hidden>
+    <div class="login-card">
+      <div class="brand big">Smart<span>Route</span></div>
+      <p><b>⛔ המשתמש לא קיים</b></p>
+      <p class="muted" id="noUserEmail" dir="ltr"></p>
+      <p class="muted" id="noUserWhy"></p>
+      <div class="sheet-actions">
+        <a class="btn primary" href="Registration.html">📝 להרשמה</a>
+        <button id="noUserLogout" class="btn" type="button">התנתק</button>
+      </div>
     </div>
   </section>
 

@@ -78,8 +78,24 @@ async function firebaseBackend(config) {
       return fs.setDoc(ref, { uid, name: user.name || '', email: user.email || '', photo: user.photo || '', app: appInfo?.name || 'SmartRoute', lastSeen: Date.now(), firstSeen: firstSeen || Date.now() }, { merge: true });
     },
     saveProfile: (patch) => fs.setDoc(fs.doc(db, appInfo?.dataRoot || 'users', uid), { ...patch, lastSeen: Date.now() }, { merge: true }),
-    // Enabled/disabled flag set by the admin. Errors (e.g. older rules) count as enabled.
-    watchAccess: (cb) => fs.onSnapshot(fs.doc(db, 'access', uid), (s) => cb(s.exists() ? s.data() : null), () => cb(null)),
+    // Membership (members/{uid}): invite-only sign-up, role, enabled/disabled – see js/members.js.
+    async getMember() { const s = await fs.getDoc(fs.doc(db, 'members', uid)); return s.exists() ? s.data() : null; },
+    watchMember: (cb) => fs.onSnapshot(fs.doc(db, 'members', uid), (s) => cb(s.exists() ? s.data() : null), () => {}),
+    createMember: (data) => fs.setDoc(fs.doc(db, 'members', uid), data),
+    async getInvite(token) { const s = await fs.getDoc(fs.doc(db, 'invites', token)); return s.exists() ? s.data() : null; },
+    // Personal referral codes (refs/{ref}, doc id = the ref).
+    async myRefs() {
+      const s = await fs.getDocs(fs.query(fs.collection(db, 'refs'), fs.where('owner', '==', uid)));
+      return s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    },
+    // Create refs + set the main one in one batch (fails as a whole if a ref is already taken).
+    async createMyRefs(refs, primaryRef) {
+      const b = fs.writeBatch(db);
+      refs.forEach((r) => b.set(fs.doc(db, 'refs', r.id), { owner: uid, kind: r.kind, label: r.label || '', active: true, leads: 0, createdAt: Date.now() }));
+      b.update(fs.doc(db, 'members', uid), { primaryRef, updatedAt: Date.now() });
+      await b.commit();
+    },
+    setPrimaryRef: (primaryRef) => fs.updateDoc(fs.doc(db, 'members', uid), { primaryRef, updatedAt: Date.now() }),
     // Google Route Optimization through the optimizeRoute Cloud Function.
     async optimize(payload) {
       const f = await import(`${FB}/firebase-functions.js`);
@@ -132,7 +148,17 @@ function demoBackend() {
     setGeo: async (key, val) => { st.geo[key] = val; save(); },
     incUsage: async (kind, n = 1) => { const k = 'usage-' + monthKey(); st.meta[k] ||= { month: monthKey() }; st.meta[k][kind] = (st.meta[k][kind] || 0) + n; save(); },
     touchProfile: async () => {}, saveProfile: async () => {},
-    watchAccess: (cb) => { setTimeout(() => cb(null), 0); return () => {}; },
+    // Demo membership: always a member (?demo=1&nouser=1 → "user doesn't exist"; add &invite=… to test joining).
+    getMember: async () => (new URLSearchParams(location.search).has('nouser') ? null : (st.member ||= { uid: 'demo', role: 'user', disabled: false, refSuffix: 'd87d32', invitedBy: 'demo-admin' })),
+    watchMember: (cb) => { setTimeout(() => cb(st.member || null), 0); return () => {}; },
+    createMember: async (data) => { st.member = clone(data); save(); },
+    getInvite: async (token) => (token ? { owner: 'demo-admin', ownerName: 'מנהל הדגמה', active: true } : null),
+    myRefs: async () => clone(st.refs || []),
+    async createMyRefs(refs, primaryRef) {
+      st.refs = [...(st.refs || []), ...refs.map((r) => ({ ...r, owner: 'demo', active: true, leads: r.kind === 'name' ? 3 : 1, createdAt: Date.now() }))];
+      st.member = { ...(st.member || {}), primaryRef }; save();
+    },
+    setPrimaryRef: async (primaryRef) => { st.member = { ...(st.member || {}), primaryRef }; save(); },
   };
 }
 

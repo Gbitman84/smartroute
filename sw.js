@@ -4,7 +4,7 @@
 const CACHE = 'smartroute-shell-v1';
 const SHELL = ['./', 'index.html', 'style.css', 'manifest.json', 'icon.svg', 'icon-192.png',
   'js/app.js', 'js/db.js', 'js/util.js', 'js/nav.js', 'js/solver.js', 'js/firebase-config.js',
-  'js/maps/provider.js', 'js/maps/osm.js', 'js/maps/google.js'];
+  'js/maps/provider.js', 'js/maps/osm.js', 'js/maps/google.js', 'js/members.js', 'Registration.html', 'js/registration.js'];
 const CDN = ['cdnjs.cloudflare.com', 'fonts.googleapis.com', 'fonts.gstatic.com', 'www.gstatic.com'];
 
 self.addEventListener('install', (e) => {

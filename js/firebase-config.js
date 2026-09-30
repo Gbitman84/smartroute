@@ -16,3 +16,7 @@ export const googleMapsKey = 'AIzaSyANkJk2YZExpz3JF7InlHHPWa4-V0GbBIw';
 
 // SmartRoute (lab): separate site + separate data area in the same Firebase project.
 export const appInfo = { name: 'SmartRoute', lab: true, dataRoot: 'labUsers', functionsRegion: 'europe-west1' };
+
+// Invite-only sign-up. The superadmin (also enforced in firestore.rules) is always allowed in;
+// siteUrl is the public address used in referral / registration links.
+export const access = { superadmin: 'gbitman.bd@gmail.com', siteUrl: 'https://gbitman84.github.io/smartroute/' };

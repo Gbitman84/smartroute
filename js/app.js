@@ -4,6 +4,9 @@ import * as maps from './maps/provider.js';
 import { solvePath } from './solver.js';
 import { wazeUrl, gmapsUrl, gmapsSegments } from './nav.js';
 import {
+  captureInvite, ensureMember, isSuperEmail, emailRefName, nameRefName, validShortName, refId, registrationUrl,
+} from './members.js';
+import {
   $, el, esc, todayStr, fmtDate, fmtTime, fmtDist, fmtDur, norm, addressKey, fullAddress,
   splitAddress, haversine, decodePolyline, getCurrentPosition, prefs,
 } from './util.js';
@@ -1364,9 +1367,122 @@ function menuSheet() {
       item('📊 השוואת מנועים (Google מול חינמי)', compareSheet, !S.deliveries.length),
       item('📤 ייצוא CSV', exportCsv, false, false),
       item('⚙️ הגדרות', settingsSheet),
+      item('🔗 הזמן חבר (קישור הרשמה)', inviteFriendSheet, S.db.mode === 'firebase' && !S.member?.refSuffix),
       el('button', { class: 'btn danger-outline', type: 'button', disabled: readonly() || !S.deliveries.length, onclick: resetDay }, '🗑 איפוס היום'),
     ));
   });
+}
+
+// ------------------------------------------------------------------ referral links ("invite a friend")
+// Each member shares a Registration link with their ref. Two refs with one random suffix:
+// "<email name>-<suffix>" and "<short name>-<suffix>"; the member picks the main one.
+// Custom refs (added by the superadmin in the admin panel) show up here too.
+function inviteFriendSheet() {
+  openModal((m) => {
+    const body = el('div', {}, el('p', { class: 'muted' }, 'טוען…'));
+    m.append(el('h2', {}, '🔗 הזמן חבר'),
+      el('p', { class: 'muted' }, 'שלח את קישור ההרשמה שלך. מי שנרשם דרכו נרשם על שמך, ומנהל יחזור אליו עם קישור הצטרפות.'),
+      body);
+
+    const copy = async (text) => {
+      try { await navigator.clipboard.writeText(text); toast('הקישור הועתק ✓'); }
+      catch { prompt('העתק את הקישור:', text); }
+    };
+    const waUrl = (url) => `https://wa.me/?text=${encodeURIComponent(`היי! נרשמים ל-SmartRoute – סידור מסלול משלוחים חכם – דרך הקישור הזה:\n${url}`)}`;
+    const KIND = { email: 'לפי אימייל', name: 'לפי שם', custom: 'מותאם' };
+
+    const drawRefs = (refs) => {
+      const primary = S.member?.primaryRef;
+      const list = refs.slice().sort((a, b) => (b.id === primary) - (a.id === primary) || (a.createdAt || 0) - (b.createdAt || 0));
+      body.replaceChildren(el('div', { class: 'ref-list' }, list.map((r) => {
+        const url = registrationUrl(r.id);
+        const isMain = r.id === primary;
+        return el('div', { class: 'ref-card' + (isMain ? ' main' : '') + (r.active === false ? ' off' : '') },
+          el('div', { class: 'ref-head' },
+            el('b', { dir: 'ltr' }, r.id),
+            el('span', { class: 'muted' }, ` · ${r.label || KIND[r.kind] || ''}`),
+            isMain ? el('span', { class: 'ref-main' }, '⭐ הקישור הראשי') : null),
+          el('div', { class: 'ref-url', dir: 'ltr' }, url),
+          el('div', { class: 'muted' }, `${r.leads || 0} נרשמו דרך הקישור${r.active === false ? ' · הקישור כבוי' : ''}`),
+          el('div', { class: 'sheet-actions' },
+            el('button', { class: 'btn small', type: 'button', onclick: () => copy(url) }, '📋 העתק'),
+            el('a', { class: 'btn small', href: waUrl(url), target: '_blank', rel: 'noopener' }, '💬 וואטסאפ'),
+            isMain || r.active === false ? null : el('button', { class: 'btn small', type: 'button', onclick: async () => {
+              try { await S.db.setPrimaryRef(r.id); S.member = { ...S.member, primaryRef: r.id }; drawRefs(refs); toast('הקישור הראשי עודכן ✓'); }
+              catch (e) { toast('שגיאה: ' + e.message, { err: true }); }
+            } }, '⭐ קבע כראשי')));
+      })));
+    };
+
+    // First time: create the email ref and a short-name ref (asks for an English name when needed).
+    const drawCreate = () => {
+      const suffix = S.member.refSuffix;
+      const emailName = emailRefName(S.user.email) || 'user';
+      const shortIn = el('input', { value: nameRefName(S.user.name), dir: 'ltr', placeholder: 'gil', autocomplete: 'off', maxlength: 20 });
+      const preview = el('b', { dir: 'ltr' });
+      const upd = () => { shortIn.value = shortIn.value.toLowerCase().replace(/[^a-z]/g, ''); preview.textContent = refId(shortIn.value || '…', suffix); };
+      shortIn.addEventListener('input', upd); upd();
+      const pick = { value: 'name' };
+      const opt = (value, label, node) => {
+        const r = el('input', { type: 'radio', name: 'mainRef', value });
+        r.checked = value === pick.value;
+        r.addEventListener('change', () => (pick.value = value));
+        return el('label', { class: 'ref-opt' }, r, el('span', {}, label, ' ', node));
+      };
+      const go = el('button', { class: 'btn primary', type: 'button' }, 'צור את הקישורים שלי');
+      go.addEventListener('click', async () => {
+        const short = shortIn.value;
+        if (!validShortName(short)) return toast('שם קצר באנגלית: 2–20 אותיות (a-z)', { err: true });
+        const refs = [{ id: refId(emailName, suffix), kind: 'email' }, { id: refId(short, suffix), kind: 'name' }];
+        if (refs[0].id === refs[1].id) refs.pop();
+        const primary = pick.value === 'email' || refs.length === 1 ? refs[0].id : refs[1].id;
+        go.disabled = true;
+        try {
+          await S.db.createMyRefs(refs, primary);
+          S.member = { ...S.member, primaryRef: primary };
+          drawRefs(await S.db.myRefs());
+        } catch (e) {
+          console.error(e);
+          toast('לא הצלחתי ליצור את הקישורים – אולי השם תפוס. נסה שם קצר אחר.', { err: true, ms: 6000 });
+          go.disabled = false;
+        }
+      });
+      body.replaceChildren(
+        el('p', {}, 'יש לך שני קישורים אפשריים – שניהם יעבדו. בחר איזה מהם יהיה הראשי:'),
+        el('div', { class: 'radio-list' },
+          opt('name', 'לפי שם:', preview),
+          opt('email', 'לפי אימייל:', el('b', { dir: 'ltr' }, refId(emailName, suffix)))),
+        el('label', { class: 'field' }, 'שם קצר באנגלית (לקישור לפי שם)', shortIn),
+        el('div', { class: 'sheet-actions' }, go));
+    };
+
+    (async () => {
+      try {
+        const refs = await S.db.myRefs();
+        if (refs.some((r) => r.kind === 'email' || r.kind === 'name')) drawRefs(refs);
+        else if (S.member?.refSuffix) drawCreate();
+        else body.replaceChildren(el('p', {}, 'אין עדיין קישור הרשמה לחשבון הזה.'));
+      } catch (e) {
+        body.replaceChildren(el('p', { class: 'err' }, 'שגיאה בטעינת הקישורים: ' + e.message));
+      }
+    })();
+  });
+}
+
+// ------------------------------------------------------------------ membership screens
+// Signed in with Google, but not a SmartRoute user (no magic link) – or the link was invalid.
+function showNoUser(gate) {
+  $('#loading').hidden = true;
+  $('#login').hidden = true;
+  $('#app').hidden = true;
+  $('#searchBar').hidden = true;
+  $('#noUser').hidden = false;
+  $('#noUserEmail').textContent = S.user?.email || '';
+  $('#noUserWhy').textContent = gate.state === 'badInvite'
+    ? 'קישור ההזמנה אינו תקף (אולי הוחלף בקישור חדש). בקש מהמנהל קישור עדכני.'
+    : gate.state === 'error'
+      ? 'לא ניתן לבדוק את החשבון כרגע: ' + (gate.error?.message || '')
+      : 'ההצטרפות ל-SmartRoute אפשרית רק עם קישור הזמנה ממנהל. אפשר להשאיר פרטים ונחזור אליך.';
 }
 
 // ------------------------------------------------------------------ subscriptions & boot
@@ -1456,6 +1572,9 @@ async function boot() {
   bindUi();
   $('#blockedLogout').addEventListener('click', () => S.db.signOut());
   $('#blockedReload').addEventListener('click', () => location.reload());
+  $('#noUserLogout').addEventListener('click', () => S.db.signOut());
+  // Magic link (?invite=…): remember it through the Google sign-in and say so on the login card.
+  $('#inviteNote').hidden = !captureInvite();
   try {
     S.db = await createDb();
   } catch (e) {
@@ -1473,13 +1592,28 @@ async function boot() {
 
   S.db.onAuth(async (user) => {
     S.user = user;
-    $('#loading').hidden = true;
-    $('#login').hidden = !!user;
-    $('#app').hidden = !user;
-    $('#searchBar').hidden = !user;
     S.accessUnsub?.(); S.accessUnsub = null;
-    if (!user) { setBlocked(false); S.unsubs.forEach((u) => u()); S.unsubs = []; return; }
-    S.accessUnsub = S.db.watchAccess((acc) => setBlocked(acc?.disabled === true));
+    $('#noUser').hidden = true;
+    if (!user) {
+      $('#loading').hidden = true; $('#login').hidden = false; $('#app').hidden = true; $('#searchBar').hidden = true;
+      setBlocked(false); S.unsubs.forEach((u) => u()); S.unsubs = []; return;
+    }
+    // Invite-only: only members (joined through an admin's magic link) may use SmartRoute.
+    $('#login').hidden = true;
+    $('#loading').hidden = false;
+    const gate = await ensureMember(S.db, user);
+    if (S.user !== user) return;
+    if (!['ok', 'joined', 'disabled'].includes(gate.state)) return showNoUser(gate);
+    S.member = gate.member;
+    $('#loading').hidden = true;
+    $('#app').hidden = false;
+    $('#searchBar').hidden = false;
+    $('#inviteNote').hidden = true;
+    if (gate.state === 'joined') toast(`ברוך הבא ל-SmartRoute! 🎉${gate.inviter ? ` הצטרפת בהזמנת ${gate.inviter}.` : ''}`, { ms: 6000 });
+    S.accessUnsub = S.db.watchMember((mem) => {
+      if (mem) S.member = mem;
+      setBlocked(mem?.disabled === true && !isSuperEmail(user.email));
+    });
     S.db.touchProfile(user).catch(() => {});
     const saved = await S.db.getMeta('settings').catch(() => null);
     S.settings = { ...DEFAULT_SETTINGS, ...(saved || {}) };

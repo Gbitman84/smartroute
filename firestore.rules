@@ -3,34 +3,112 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
 
-    // SmartRoute Admin panel: may read every user's data and enable/disable users.
-    function isAdmin() {
+    // ---------------------------------------------------------------- roles
+    // SUPERADMIN: this email only. No document can grant it.
+    function isSuper() {
       return signedIn() && request.auth.token.email_verified == true
-        && request.auth.token.email in ['gbitman.bd@gmail.com'];
+        && request.auth.token.email == 'gbitman.bd@gmail.com';
     }
+    // SmartRoute membership: members/{uid} (created through an admin's magic link).
+    function hasMemberDoc() { return signedIn() && exists(/databases/$(database)/documents/members/$(request.auth.uid)); }
+    function me() { return get(/databases/$(database)/documents/members/$(request.auth.uid)).data; }
+    function isMember() { return isSuper() || (hasMemberDoc() && me().get('disabled', false) != true); }
+    // ADMIN: role set by the superadmin. Admins may use the admin panel but cannot give admin.
+    function isAdmin() { return isSuper() || (isMember() && me().get('role', 'user') == 'admin'); }
 
-    // A user the admin disabled (access/{uid}.disabled == true) loses access to their own data.
+    // ---------------------------------------------------------------- SmartRun (archive)
+    // A user disabled in access/{uid} loses access to their SmartRun data.
     function enabled() {
       return !exists(/databases/$(database)/documents/access/$(request.auth.uid))
         || get(/databases/$(database)/documents/access/$(request.auth.uid)).data.get('disabled', false) != true;
     }
-    function owner(uid) { return signedIn() && request.auth.uid == uid && enabled(); }
-
-    // SmartRun (production): each signed-in user can read/write only their own data.
     match /users/{uid}/{document=**} {
-      allow read, write: if owner(uid);
+      allow read, write: if signedIn() && request.auth.uid == uid && enabled();
       allow read: if isAdmin();
     }
-    // SmartRoute (lab): separate data area, same rule.
-    match /labUsers/{uid}/{document=**} {
-      allow read, write: if owner(uid);
-      allow read: if isAdmin();
-    }
-    // Enabled/disabled flag per user – written only by the admin, readable by the user it belongs to.
     match /access/{uid} {
       allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
-      allow write: if isAdmin();
+      allow write: if isSuper();
     }
+
+    // ---------------------------------------------------------------- SmartRoute data
+    match /labUsers/{uid}/{document=**} {
+      allow read, write: if signedIn() && request.auth.uid == uid && isMember();
+      allow read: if isAdmin();
+    }
+
+    // ---------------------------------------------------------------- members
+    // Joining through a magic link: the new user writes their own doc, as a plain active user,
+    // credited to the owner of an active invite.
+    function validJoin(uid) {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['uid', 'role', 'disabled', 'name', 'email', 'joinedAt', 'invitedBy', 'inviteToken', 'refSuffix'])
+        && d.uid == uid && d.role == 'user' && d.disabled == false
+        && d.refSuffix is string && d.refSuffix.matches('^[a-z0-9]{6}$')
+        && d.inviteToken is string && d.inviteToken.matches('^[A-Za-z0-9]{16,40}$')
+        && exists(/databases/$(database)/documents/invites/$(d.inviteToken))
+        && get(/databases/$(database)/documents/invites/$(d.inviteToken)).data.active == true
+        && d.invitedBy == get(/databases/$(database)/documents/invites/$(d.inviteToken)).data.owner;
+    }
+    match /members/{uid} {
+      allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
+      allow create: if signedIn() && request.auth.uid == uid && validJoin(uid);
+      allow create, update: if isSuper();
+      // A member picks which of their own refs is their main registration link.
+      allow update: if signedIn() && request.auth.uid == uid && isMember()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryRef', 'updatedAt'])
+        && getAfter(/databases/$(database)/documents/refs/$(request.resource.data.primaryRef)).data.owner == uid;
+      // Admins may disable / enable regular users (never admins, never themselves, never roles).
+      allow update: if isAdmin() && request.auth.uid != uid && resource.data.get('role', 'user') != 'admin'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disabled', 'note', 'updatedAt', 'updatedBy']);
+    }
+
+    // ---------------------------------------------------------------- magic links (invites)
+    // Anyone holding the token may read it (needed to join). Admins see only their own links.
+    match /invites/{token} {
+      allow get: if signedIn();
+      allow list: if isSuper() || (isAdmin() && resource.data.owner == request.auth.uid);
+      allow create: if isSuper() || (isAdmin() && request.resource.data.owner == request.auth.uid);
+      allow update: if isSuper() || (isAdmin() && resource.data.owner == request.auth.uid
+        && request.resource.data.owner == request.auth.uid);
+    }
+
+    // ---------------------------------------------------------------- referral codes (refs)
+    // Doc id = the ref, so refs are unique. Members create their own email/name refs
+    // ("<name>-<their refSuffix>"); the superadmin adds custom refs and switches refs on/off.
+    match /refs/{ref} {
+      allow read: if isAdmin() || (signedIn() && resource.data.owner == request.auth.uid);
+      allow create: if isSuper() && ref.matches('^[a-z0-9._-]{3,40}$');
+      allow create: if isMember() && hasMemberDoc()
+        && request.resource.data.keys().hasOnly(['owner', 'kind', 'label', 'active', 'leads', 'createdAt'])
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.kind in ['email', 'name']
+        && request.resource.data.active == true && request.resource.data.leads == 0
+        && ref.matches('^[a-z0-9._]{1,30}-' + me().refSuffix + '$');
+      allow update: if isSuper();
+      allow update: if isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['leads']);
+    }
+
+    // ---------------------------------------------------------------- registration requests
+    // Public form (no sign-in): create only, strictly validated. Admins handle them.
+    function validRegistration() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['name', 'mobile', 'ref', 'source', 'createdAt', 'status'])
+        && d.keys().hasAll(['name', 'mobile', 'ref', 'source', 'createdAt', 'status'])
+        && d.name is string && d.name.size() >= 2 && d.name.size() <= 60
+        && d.mobile is string && d.mobile.matches('^05[0-9]{8}$')
+        && d.ref is string && d.ref.size() <= 40
+        && d.source in ['link', 'manual'] && d.status == 'new'
+        && d.createdAt == request.time;
+    }
+    match /registrations/{id} {
+      allow create: if validRegistration();
+      allow read: if isAdmin();
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'note', 'handledBy', 'handledAt']);
+      allow delete: if isSuper();
+    }
+
     // quota/* is written only by the Cloud Function (admin SDK); no client access.
   }
 }
