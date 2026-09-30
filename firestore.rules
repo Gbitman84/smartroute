@@ -35,6 +35,7 @@ service cloud.firestore {
     match /labUsers/{uid}/{document=**} {
       allow read, write: if signedIn() && request.auth.uid == uid && isMember();
       allow read: if isAdmin();
+      allow delete: if isSuper();   // deleting a user together with their work data
     }
 
     // ---------------------------------------------------------------- members
@@ -54,6 +55,8 @@ service cloud.firestore {
       allow read: if (signedIn() && request.auth.uid == uid) || isAdmin();
       allow create: if signedIn() && request.auth.uid == uid && validJoin(uid);
       allow create, update: if isSuper();
+      // Only the superadmin deletes users (never themselves).
+      allow delete: if isSuper() && request.auth.uid != uid;
       // A member picks which of their own refs is their main registration link.
       allow update: if signedIn() && request.auth.uid == uid && isMember()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['primaryRef', 'updatedAt'])
@@ -85,7 +88,7 @@ service cloud.firestore {
         && request.resource.data.kind in ['email', 'name']
         && request.resource.data.active == true && request.resource.data.leads == 0
         && ref.matches('^[a-z0-9._]{1,30}-' + me().refSuffix + '$');
-      allow update: if isSuper();
+      allow update, delete: if isSuper();
       allow update: if isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['leads']);
     }
 

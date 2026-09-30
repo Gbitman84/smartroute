@@ -42,7 +42,7 @@ export async function ensureMember(db, user) {
   const base = { uid: user.uid, role: 'user', disabled: false, name: user.name || '', email: user.email || '', joinedAt: Date.now(), refSuffix: randomStr(6) };
   if (superUser) {
     member = { ...base, invitedBy: 'superadmin' };
-    await db.createMember(member).catch(() => {});
+    try { await db.createMember(member); } catch { member = null; } // e.g. rules not deployed yet – retried later
     return { state: 'ok', member };
   }
 

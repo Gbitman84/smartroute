@@ -1367,7 +1367,7 @@ function menuSheet() {
       item('📊 השוואת מנועים (Google מול חינמי)', compareSheet, !S.deliveries.length),
       item('📤 ייצוא CSV', exportCsv, false, false),
       item('⚙️ הגדרות', settingsSheet),
-      item('🔗 הזמן חבר (קישור הרשמה)', inviteFriendSheet, S.db.mode === 'firebase' && !S.member?.refSuffix),
+      item('🔗 הזמן חבר (קישור הרשמה)', inviteFriendSheet),
       el('button', { class: 'btn danger-outline', type: 'button', disabled: readonly() || !S.deliveries.length, onclick: resetDay }, '🗑 איפוס היום'),
     ));
   });
@@ -1458,12 +1458,22 @@ function inviteFriendSheet() {
 
     (async () => {
       try {
+        // No member record yet (e.g. it couldn't be created at sign-in) → try again now.
+        if (!S.member?.refSuffix) {
+          const gate = await ensureMember(S.db, S.user).catch(() => null);
+          if (gate?.member) S.member = gate.member;
+        }
+        if (!S.member?.refSuffix) {
+          body.replaceChildren(el('p', { class: 'err' }, 'לא ניתן ליצור קישורים כרגע – חשבון החבר שלך עוד לא נוצר בענן. אם כללי ההרשאות (firestore.rules) עודכנו לאחרונה, סגור ונסה שוב בעוד דקה.'));
+          return;
+        }
         const refs = await S.db.myRefs();
         if (refs.some((r) => r.kind === 'email' || r.kind === 'name')) drawRefs(refs);
-        else if (S.member?.refSuffix) drawCreate();
-        else body.replaceChildren(el('p', {}, 'אין עדיין קישור הרשמה לחשבון הזה.'));
+        else drawCreate();
       } catch (e) {
-        body.replaceChildren(el('p', { class: 'err' }, 'שגיאה בטעינת הקישורים: ' + e.message));
+        body.replaceChildren(el('p', { class: 'err' }, e.code === 'permission-denied'
+          ? 'אין הרשאה לקרוא את הקישורים – כנראה שכללי ההרשאות (firestore.rules) עוד לא עודכנו בענן.'
+          : 'שגיאה בטעינת הקישורים: ' + e.message));
       }
     })();
   });
