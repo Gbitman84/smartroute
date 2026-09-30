@@ -17,6 +17,7 @@
   <div class="sticky-top">
   <header class="topbar">
     <div class="brand">Smart<span>Route</span> <em class="lab">LAB</em></div>
+    <button id="userChip" class="user-chip" type="button" title="תפריט" hidden></button>
     <button id="dayBtn" class="day-btn" type="button" title="בחירת תאריך / היסטוריה">—</button>
     <button id="menuBtn" class="icon-btn" type="button" aria-label="תפריט">☰</button>
   </header>
@@ -104,10 +105,10 @@
   <section id="blocked" class="login" hidden>
     <div class="login-card">
       <div class="brand big">Smart<span>Route</span></div>
-      <p>⛔ החשבון הושבת על ידי מנהל המערכת.</p>
-      <p class="muted">לפרטים פנה למנהל. לאחר הפעלה מחדש האפליקציה תיפתח שוב.</p>
+      <p id="blockedMsg"><b>⛔ החשבון הושבת על ידי מנהל המערכת.</b></p>
+      <p id="blockedSub" class="muted">לפרטים פנה למנהל. לאחר הפעלה מחדש האפליקציה תיפתח שוב.</p>
       <button id="blockedReload" class="btn primary" type="button">נסה שוב</button>
-      <button id="blockedLogout" class="btn" type="button">התנתק</button>
+      <button id="blockedLogout" class="btn" type="button">חזרה למסך הכניסה</button>
     </div>
   </section>
 

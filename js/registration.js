@@ -7,6 +7,19 @@ const FB = 'https://www.gstatic.com/firebasejs/10.12.2';
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 const demo = params.has('demo');
+const emu = params.has('emu'); // ?emu=1 → local Firebase emulator (tests only)
+
+// Browser-side guard against repeated / scripted submissions: max per device per day.
+// Test value – revisit before going live (together with App Check).
+const MAX_PER_DAY = 3;
+const LIMIT_KEY = 'smartroute.reg.sent';
+const today = () => new Date().toISOString().slice(0, 10);
+function sentToday() {
+  try { const v = JSON.parse(localStorage.getItem(LIMIT_KEY) || '{}'); return v.day === today() ? v.n || 0 : 0; } catch { return 0; }
+}
+function countSent() {
+  try { localStorage.setItem(LIMIT_KEY, JSON.stringify({ day: today(), n: sentToday() + 1 })); } catch { /* ignore */ }
+}
 
 const urlRef = (params.get('ref') || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 40);
 if (urlRef) {
@@ -26,7 +39,11 @@ function normMobile(v) {
 let dbPromise = null;
 function firestore() {
   return (dbPromise ||= Promise.all([import(`${FB}/firebase-app.js`), import(`${FB}/firebase-firestore.js`)])
-    .then(([{ initializeApp }, fs]) => ({ fs, db: fs.getFirestore(initializeApp(firebaseConfig, 'registration')) })));
+    .then(([{ initializeApp }, fs]) => {
+      const db = fs.getFirestore(initializeApp(firebaseConfig, 'registration'));
+      if (emu) fs.connectFirestoreEmulator(db, '127.0.0.1', 8080);
+      return { fs, db };
+    }));
 }
 
 $('#regForm').addEventListener('submit', async (e) => {
@@ -39,6 +56,7 @@ $('#regForm').addEventListener('submit', async (e) => {
   const ref = urlRef || $('#regRef').value.trim().slice(0, 40);
   if (name.length < 2) { err.textContent = 'נא למלא שם מלא.'; $('#regName').focus(); return; }
   if (!/^05\d{8}$/.test(mobile)) { err.textContent = 'נא למלא מספר נייד ישראלי תקין (05X-XXXXXXX).'; $('#regMobile').focus(); return; }
+  if (sentToday() >= MAX_PER_DAY) { err.textContent = 'כבר נשלחו כמה פניות מהמכשיר הזה היום. נחזור אליך בהקדם.'; return; }
 
   const btn = $('#regSubmit');
   btn.disabled = true;
@@ -50,6 +68,7 @@ $('#regForm').addEventListener('submit', async (e) => {
         name: name.slice(0, 60), mobile, ref, source: urlRef ? 'link' : 'manual', createdAt: fs.serverTimestamp(), status: 'new',
       });
     }
+    countSent();
     $('#regForm').hidden = true;
     $('#regDone').hidden = false;
   } catch (e2) {

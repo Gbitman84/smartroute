@@ -1,0 +1,27 @@
+rules_version = '2';
+// Firebase Storage (shared bucket of project smartrun-gbit).
+// SmartRoute keeps import screenshots under labUsers/{uid}/imports/{importId}/ for 14 days
+// (deleted daily by the cleanupImports Cloud Function).
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSuper() {
+      return request.auth != null && request.auth.token.email_verified == true
+        && request.auth.token.email == 'gbitman.bd@gmail.com';
+    }
+    // Active SmartRoute member (same as isMember() in firestore.rules): a disabled or deleted
+    // user can't read or upload screenshots, even from a session that is still open.
+    function activeMember(uid) {
+      return request.auth != null && request.auth.uid == uid && (isSuper() || (
+        firestore.exists(/databases/(default)/documents/members/$(uid))
+        && firestore.get(/databases/(default)/documents/members/$(uid)).data.get('disabled', false) != true));
+    }
+
+    match /labUsers/{uid}/imports/{importId}/{file} {
+      allow read: if activeMember(uid) || isSuper();
+      // Upload: images only, up to 5 MB. Delete (no request.resource) is allowed to the owner.
+      allow write: if activeMember(uid)
+        && (request.resource == null
+            || (request.resource.size < 5 * 1024 * 1024 && request.resource.contentType.matches('image/.*')));
+    }
+  }
+}

@@ -1,0 +1,761 @@
+{
+  "at": "2026-09-30T10:34:41.402Z",
+  "results": [
+    {
+      "area": "labUsers",
+      "name": "user reads own day",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "user writes own delivery",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "user reads another user",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "user writes another user",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "admin reads a user",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "admin writes a user",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "disabled user reads own",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "disabled user writes own",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "non-member reads own path",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "non-member writes own path",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "anonymous reads a user",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "disabled admin reads a user",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "superadmin reads a user",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "superadmin deletes a user delivery",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "admin deletes a user delivery",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "user deletes own delivery",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "admin lists all profiles",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "labUsers",
+      "name": "user lists all profiles",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "users (SmartRun)",
+      "name": "owner reads own",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "users (SmartRun)",
+      "name": "admin reads",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "users (SmartRun)",
+      "name": "other user reads",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join with an active link",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join with an inactive link",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join with a non-existent link",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join as admin",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join credited to someone else",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join with an extra field",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join already disabled=false only",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join with a bad refSuffix",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join for another uid",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members/join",
+      "name": "join without sign-in",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "user reads own record",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "disabled user reads own record (to see the message)",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "user reads another record",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "user lists members",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "admin lists members",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "disabled admin lists members",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "admin disables a user",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "admin disables an admin",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "admin disables themselves",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "admin makes a user admin",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "admin deletes a user",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "user makes themselves admin",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "user re-enables themselves",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "user picks own ref as main",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "user picks someone else's ref",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "superadmin makes a user admin",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "superadmin deletes a user",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "members",
+      "name": "superadmin deletes themselves",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "signed-in user opens a link",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "anonymous opens a link",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "user lists links",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "admin lists own links",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "admin lists all links",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "superadmin lists all links",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "admin creates own link",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "admin creates a link for another admin",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "user creates a link",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "admin turns off own link",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "admin turns off the superadmin's link",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "invites",
+      "name": "superadmin creates a link for an admin",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user creates own email ref",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user creates a ref with a wrong suffix",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user takes an existing ref",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user creates a custom ref",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user creates a ref with leads",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user creates a ref for someone else",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "disabled user creates a ref",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "superadmin adds a custom ref",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "admin adds a custom ref",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "admin updates lead count",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "admin changes a ref label",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user updates own lead count",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user lists own refs",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "user reads someone else's ref",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "refs",
+      "name": "superadmin turns a ref off",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous sends a valid request",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous: mobile not 05XXXXXXXX",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous: name of 1 character",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous: name of 61 characters",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous: extra field",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous: status other than new",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous: client-set time",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous: ref of 41 characters",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "anonymous reads requests",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "user reads requests",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "admin reads requests",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "admin sets status + note",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "admin edits the name",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "admin deletes a request",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "registrations",
+      "name": "superadmin deletes a request",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "config/quota",
+      "name": "admin reads limits",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "config/quota",
+      "name": "user reads limits",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "config/quota",
+      "name": "admin changes limits",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "config/quota",
+      "name": "superadmin changes limits",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "config/quota",
+      "name": "admin reads usage",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "config/quota",
+      "name": "user reads usage",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "config/quota",
+      "name": "superadmin writes usage",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "user uploads own screenshot",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "user reads own screenshot",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "disabled user uploads",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "non-member uploads",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "user uploads to someone else's folder",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "user uploads a non-image",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "user reads someone else's screenshot",
+      "expect": "deny",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "storage",
+      "name": "superadmin reads a user's screenshot",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "batch",
+      "name": "user imports 100 deliveries in one batch",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    },
+    {
+      "area": "batch",
+      "name": "superadmin deletes 100 documents in one batch",
+      "expect": "allow",
+      "pass": true,
+      "error": ""
+    }
+  ]
+}

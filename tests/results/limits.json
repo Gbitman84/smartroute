@@ -1,0 +1,45 @@
+{
+  "at": "2026-09-30T10:34:26.464Z",
+  "results": [
+    {
+      "name": "user: first smart route of the day",
+      "pass": true
+    },
+    {
+      "name": "user: second smart route refused (role cap 1)",
+      "pass": true
+    },
+    {
+      "name": "admin: second allowed, third refused (cap 2)",
+      "pass": true
+    },
+    {
+      "name": "global cap stops everyone (3 in total)",
+      "pass": true
+    },
+    {
+      "name": "empty role value = no role cap, only global",
+      "pass": true
+    },
+    {
+      "name": "0 = blocked",
+      "pass": true
+    },
+    {
+      "name": "future role without its own row falls back to user",
+      "pass": true
+    },
+    {
+      "name": "defaults: every role 40 routes / 120 reads",
+      "pass": true
+    },
+    {
+      "name": "defaults: 40th route allowed, 41st refused",
+      "pass": true
+    },
+    {
+      "name": "missing config → defaults",
+      "pass": true
+    }
+  ]
+}

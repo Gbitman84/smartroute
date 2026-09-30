@@ -112,6 +112,15 @@ service cloud.firestore {
       allow delete: if isSuper();
     }
 
-    // quota/* is written only by the Cloud Function (admin SDK); no client access.
+    // ---------------------------------------------------------------- settings & usage
+    // config/limits: daily limits per role (smart route, screenshot reads) – set by the superadmin in the admin panel.
+    match /config/{doc} {
+      allow read: if isAdmin();
+      allow write: if isSuper();
+    }
+    // quota/*: daily usage counters, written only by the Cloud Functions (admin SDK). Admins may read them.
+    match /quota/{doc} {
+      allow read: if isAdmin();
+    }
   }
 }

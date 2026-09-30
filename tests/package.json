@@ -1,0 +1,17 @@
+{
+  "name": "smartroute-tests",
+  "private": true,
+  "type": "module",
+  "description": "Local tests for SmartRoute (Firebase emulator): permission rules, limits, seed data",
+  "scripts": {
+    "emulators": "firebase emulators:start --config ../firebase.test.json --project smartrun-gbit",
+    "rules": "node rules.test.mjs",
+    "limits": "node limits.test.mjs",
+    "seed": "node seed.mjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "firebase": "^12.0.0",
+    "firebase-admin": "^13.0.0"
+  }
+}

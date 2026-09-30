@@ -22,19 +22,21 @@
   --ok-line: #b7ebc9;
   --fail-bg: #fdecec;
   --fail-line: #f6c4c4;
+  --flag-bg: #fef3c7;
+  --flag-line: #f59e0b;
   --shadow: 0 1px 3px rgba(0,0,0,.08);
   --radius: 12px;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0b1120; --card: #111827; --text: #f3f4f6; --muted: #9ca3af; --line: #1f2937;
-    --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #1f2733; --ok-bg: #173a2a; --ok-line: #25603f; --fail-bg: #3a1d22; --fail-line: #6b2a33;
+    --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #1f2733; --ok-bg: #173a2a; --ok-line: #25603f; --fail-bg: #3a1d22; --fail-line: #6b2a33; --flag-bg: #3d2e05; --flag-line: #b45309;
     --shadow: 0 1px 3px rgba(0,0,0,.5);
   }
 }
 :root[data-theme="dark"] {
   --bg: #0b1120; --card: #111827; --text: #f3f4f6; --muted: #9ca3af; --line: #1f2937;
-  --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #1f2733; --ok-bg: #173a2a; --ok-line: #25603f; --fail-bg: #3a1d22; --fail-line: #6b2a33;
+  --top: #030712; --warn-bg: #3a1d0a; --danger-bg: #3b0d0d; --info-bg: #0c1f3f; --done-bg: #1f2733; --ok-bg: #173a2a; --ok-line: #25603f; --fail-bg: #3a1d22; --fail-line: #6b2a33; --flag-bg: #3d2e05; --flag-line: #b45309;
 }
 
 * { box-sizing: border-box; }
@@ -251,6 +253,44 @@ table.preview tr.off td { opacity: .45; }
 .badge.sinit { background: #7e22ce; font-size: 15px; }
 .badge.supd { background: #a855f7; }
 
+/* Import: text / screenshots */
+.tabs { display: flex; gap: 6px; margin: 4px 0 8px; border-bottom: 1px solid var(--line); }
+.tab { background: transparent; border: 0; border-bottom: 3px solid transparent; padding: 8px 12px; font-size: 15px; font-weight: 500; color: var(--muted); cursor: pointer; }
+.tab.cur { color: var(--primary); border-bottom-color: var(--primary); }
+.thumbs { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.thumb { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 4px 6px; }
+.thumb img { width: 40px; height: 64px; object-fit: cover; border-radius: 6px; flex: none; }
+.thumb-name { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; text-align: right; }
+.thumb-btns { display: flex; gap: 4px; flex: none; }
+.thumb-btns .btn.small { min-height: 30px; padding: 4px 8px; }
+table.preview td.cell-warn { background: var(--flag-bg); box-shadow: inset 0 0 0 2px var(--flag-line); cursor: pointer; }
+table.preview td.cell-bad { background: var(--danger-bg); box-shadow: inset 0 0 0 2px var(--danger); cursor: pointer; }
+.src-btn, .icon-mini { background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 2px 6px; font-size: 12px; cursor: pointer; color: inherit; white-space: nowrap; }
+.icon-mini { font-size: 14px; color: var(--primary); }
+.issues details { border: 1px solid var(--flag-line); background: var(--flag-bg); border-radius: 10px; padding: 6px 10px; margin-top: 8px; }
+.issues summary { font-weight: 700; cursor: pointer; }
+.issue-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; max-height: 32vh; overflow: auto; }
+.issue { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; padding: 4px 0; border-top: 1px solid var(--line); }
+.issue > span { flex: 1; min-width: 180px; }
+.issue.bad > span { color: var(--danger); }
+.ok-box { background: var(--ok-bg); border: 1px solid var(--ok-line); border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 14px; }
+.fix-box { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 10px; }
+.fix-msg { font-size: 14px; margin: 2px 0; }
+.fix-msg.bad { color: var(--danger); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.shots { display: grid; gap: 10px; }
+@media (min-width: 640px) { .shots.two { grid-template-columns: 1fr 1fr; } }
+.shot { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-width: 0; }
+.shot-cap { font-size: 13px; padding: 6px 8px; background: var(--bg); border-bottom: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-scroll { max-height: 62vh; overflow: auto; }
+.shot-frame { position: relative; }
+.shot-frame img { display: block; width: 100%; height: auto; }
+.shot-mark { position: absolute; inset-inline: 0; border: 3px solid #f59e0b; background: rgba(245, 158, 11, .18); border-radius: 6px; pointer-events: none; }
+table.preview.info { min-width: 0; }
+table.preview.info th { text-align: right; }
+table.preview tr.differ td { background: var(--flag-bg); }
+table.preview td.changed { font-weight: 700; color: var(--primary); }
+
 /* ---------- membership: registration link, invite note, referral links */
 .login { position: relative; }
 .reg-link { position: absolute; top: 12px; inset-inline-start: 16px; }
@@ -264,4 +304,10 @@ table.preview tr.off td { opacity: .45; }
 .ref-url { font-size: 12px; color: var(--muted); word-break: break-all; text-align: left; margin: 4px 0; }
 .ref-opt { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 /* Not signed in to the app (login / loading / "user doesn't exist" / disabled): no menu or date button. */
-body:has(#app[hidden]) #menuBtn, body:has(#app[hidden]) #dayBtn { display: none; }
+body:has(#app[hidden]) #menuBtn, body:has(#app[hidden]) #dayBtn, body:has(#app[hidden]) #userChip { display: none; }
+/* Signed-in user in the top bar (click → menu). Phones: avatar/initials only. */
+.user-chip { display: flex; align-items: center; gap: 6px; max-width: 160px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); color: var(--top-text); border-radius: 999px; padding: 3px 10px 3px 3px; font: inherit; font-size: 14px; cursor: pointer; }
+.user-chip[hidden] { display: none; }
+.user-chip .uc-av { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex: none; display: grid; place-items: center; background: #3b82f6; color: #fff; font-weight: 700; font-size: 13px; }
+.user-chip .uc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 420px) { .user-chip { padding: 3px; } .user-chip .uc-name { display: none; } }

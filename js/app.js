@@ -19,7 +19,7 @@ const STATUS = {
   delivered_door:  { label: 'נמסר ליד הדלת',   icon: '🚪', final: true, cls: 'done' },
   no_answer_final: { label: 'לא ענה – סופי',   icon: '❌', final: true, cls: 'nofinal' },
 };
-const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 'google' : 'osm', googleKey: googleMapsKey || '', optimizer: 'google', serviceSeconds: 90, traffic: true, routeMode: 'both' };
+const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 'google' : 'osm', googleKey: googleMapsKey || '', optimizer: 'google', serviceSeconds: 90, traffic: true, routeMode: 'both', readMode: 'auto' };
 // Two route engines, each with its own frozen "initial" and its own "updated" numbering.
 const F = {
   osrm:   { init: 'initialStop', initSub: 'initialSub', upd: 'updatedStop', updSub: 'updatedSub', has: 'hasInitialRoute', line: 'routePolyline', dist: 'routeDistance', dur: 'routeDuration', built: 'initialBuiltAt' },
@@ -156,7 +156,7 @@ function onPopState() {
   showExitPrompt();
 }
 
-function confirmModal({ title, body, okText = 'אישור', danger = false, requireWord = null }) {
+function confirmModal({ title, body, okText = 'אישור', cancelText = 'ביטול', danger = false, requireWord = null }) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (v, close) => { done = true; close(); resolve(v); };
@@ -171,7 +171,7 @@ function confirmModal({ title, body, okText = 'אישור', danger = false, requ
         input.addEventListener('input', () => (ok.disabled = input.value.trim() !== requireWord));
         m.append(el('label', { class: 'field' }, `כדי לאשר הקלד: ${requireWord}`, input));
       }
-      m.append(el('div', { class: 'sheet-actions' }, ok, el('button', { class: 'btn', type: 'button', onclick: () => finish(false, close) }, 'ביטול')));
+      m.append(el('div', { class: 'sheet-actions' }, ok, el('button', { class: 'btn', type: 'button', onclick: () => finish(false, close) }, cancelText)));
       input?.focus();
     }, { onClose: () => { if (!done) resolve(false); } });
   });
@@ -451,8 +451,9 @@ async function setStatus(d, status) {
   if (readonly()) return;
   // Where the status was set (if the location is fresh) – shown on the admin panel map.
   const here = S.me && now() - S.me.at < 5 * 60000 ? { lat: S.me.lat, lng: S.me.lng } : {};
-  const history = [...(d.history || []), { status, at: now(), ...here }].slice(-30);
-  await S.db.updateDelivery(S.key, d.shipmentId, { status, statusAt: now(), history });
+  // Appended on the server (arrayUnion), so two devices changing the same delivery both keep their entry.
+  const entry = { id: `${now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, status, at: now(), ...here };
+  await S.db.appendHistory(S.key, d.shipmentId, { status, statusAt: now() }, entry);
   if (STATUS[status].final) toast(`${d.name || d.shipmentId}: ${STATUS[status].label}`);
   getCurrentPosition().then(setMe).catch(() => {}); // keep the last location fresh, no continuous tracking
 }
@@ -473,7 +474,7 @@ function statusSheet(d) {
     }
     if (d.history?.length) {
       m.append(el('h3', {}, 'היסטוריה'), el('div', { class: 'muted' },
-        d.history.slice().reverse().map((h) => el('div', {}, `${fmtStamp(h.at)} · ${STATUS[h.status]?.label || (h.status === 'moved' ? 'הועבר' : h.status)}`))));
+        d.history.slice(-30).reverse().map((h) => el('div', {}, `${fmtStamp(h.at)} · ${STATUS[h.status]?.label || (h.status === 'moved' ? 'הועבר' : h.status)}`))));
     }
   });
 }
@@ -771,6 +772,9 @@ function editSheet(d) {
       el('label', { class: 'field' }, 'עיר', f.city),
       el('div', { class: 'row2' }, el('label', { class: 'field' }, "אס' 2", f.ref), el('label', { class: 'field' }, 'סדר אפליקציה', f.appOrder)),
       el('p', { class: 'muted' }, 'מצב איתור: ', geoChip(d) || el('span', { class: 'geo manual' }, 'מדויק ✓')),
+      d.importSrc?.until > now()
+        ? el('button', { class: 'btn small', type: 'button', onclick: () => importInfoSheet(d) }, `📷 מקור + פרטי ייבוא (עד ${fmtStamp(d.importSrc.until).slice(0, 5)})`)
+        : null,
     );
     attachAutocomplete(f.street, () => f.city.value);
 
@@ -888,73 +892,718 @@ const CLAUDE_PROMPT = `אתה ממיר צילומי מסך מאפליקציית 
 - אילו מספרי # חסרים ברצף (לפי הגבוה ביותר שנראה).
 - כמה שורות עם 0 בסדר אפליקציה.
 - פרטים לא ודאיים (מספר משלוח + מה לא ברור).`;
+// 📥 Import: two ways in – pasted text (as always) or screenshots read by Claude. Both end in previewSheet.
 function importSheet() {
   openModal((m, close) => {
-    const ta = el('textarea', { placeholder: 'הדבק כאן את הטבלה (שורה לכל משלוח, עמודות מופרדות בטאב)…\nסדר אפליקציה | מספר משלוח | שם | רחוב | מס׳ בית | עיר | אס׳ 2' });
-    m.append(
-      el('h2', {}, '📥 ייבוא משלוחים'),
-      el('p', { class: 'muted' }, 'הדבק את הטבלה שקיבלת מ-Claude (או מ-Excel). אפשר גם עמודת "כתובת" אחת במקום רחוב + מספר. 0 = אין סדר אפליקציה.'),
-      el('button', { class: 'btn small', type: 'button', onclick: async () => {
-        try { await navigator.clipboard.writeText(CLAUDE_PROMPT); toast('ההוראות הועתקו – הדבק אותן ב-Claude יחד עם הצילומים ✓'); }
-        catch { ta.value = CLAUDE_PROMPT; ta.select(); toast('סמן והעתק את ההוראות מהתיבה', { ms: 4000 }); }
-      } }, '📋 העתק הוראות ל-Claude'),
-      el('label', { class: 'field' }, 'נתונים', ta),
-      el('div', { class: 'sheet-actions' },
-        el('button', { class: 'btn primary', type: 'button', onclick: () => { const rows = parseImport(ta.value); if (!rows.length) return toast('לא נמצאו שורות', { err: true }); previewSheet(rows); } }, 'הצג תצוגה מקדימה ←'),
-        el('button', { class: 'btn', type: 'button', onclick: close }, 'ביטול'),
-      ),
-    );
-    ta.focus();
+    const bar = el('div', { class: 'tabs', role: 'tablist' });
+    const body = el('div');
+    const show = (tab) => {
+      prefs.set('importTab', tab);
+      [...bar.children].forEach((b) => b.classList.toggle('cur', b.dataset.tab === tab));
+      body.replaceChildren(tab === 'photos' ? photoPane() : textPane(close));
+      body.querySelector('textarea')?.focus();
+    };
+    [['text', '📋 טקסט'], ['photos', '📷 צילומים']].forEach(([tab, label]) =>
+      bar.append(el('button', { class: 'tab', type: 'button', role: 'tab', dataset: { tab }, onclick: () => show(tab) }, label)));
+    m.append(el('h2', {}, '📥 ייבוא משלוחים'), bar, body);
+    show(prefs.get('importTab', 'text') === 'photos' ? 'photos' : 'text');
   });
 }
 
-function previewSheet(rows) {
+function textPane(close) {
+  const ta = el('textarea', { placeholder: 'הדבק כאן את הטבלה (שורה לכל משלוח, עמודות מופרדות בטאב)…\nסדר אפליקציה | מספר משלוח | שם | רחוב | מס׳ בית | עיר | אס׳ 2' });
+  return el('div', {},
+    el('p', { class: 'muted' }, 'הדבק את הטבלה שקיבלת מ-Claude (או מ-Excel). אפשר גם עמודת "כתובת" אחת במקום רחוב + מספר. 0 = אין סדר אפליקציה.'),
+    el('button', { class: 'btn small', type: 'button', onclick: async () => {
+      try { await navigator.clipboard.writeText(CLAUDE_PROMPT); toast('ההוראות הועתקו – הדבק אותן ב-Claude יחד עם הצילומים ✓'); }
+      catch { ta.value = CLAUDE_PROMPT; ta.select(); toast('סמן והעתק את ההוראות מהתיבה', { ms: 4000 }); }
+    } }, '📋 העתק הוראות ל-Claude'),
+    el('label', { class: 'field' }, 'נתונים', ta),
+    el('div', { class: 'sheet-actions' },
+      el('button', { class: 'btn primary', type: 'button', onclick: () => { const rows = parseImport(ta.value); if (!rows.length) return toast('לא נמצאו שורות', { err: true }); previewSheet(rows); } }, 'הצג תצוגה מקדימה ←'),
+      el('button', { class: 'btn', type: 'button', onclick: close }, 'ביטול'),
+    ),
+  );
+}
+
+function photoPane() {
+  const picked = [];                                   // [{ file, thumb }] in table order
+  const input = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+  const list = el('div', { class: 'thumbs' });
+  const mode = el('select', {}, Object.entries(READ_MODES).map(([v, label]) => el('option', { value: v }, label)));
+  mode.value = S.settings.readMode || 'auto';
+  const dbl = el('input', { type: 'checkbox' });
+  const est = el('p', { class: 'muted' });
+  const status = el('p', { class: 'muted' });
+  const go = el('button', { class: 'btn primary', type: 'button' }, '📷 קרא צילומים ←');
+
+  const move = (i, by) => { const [f] = picked.splice(i, 1); picked.splice(i + by, 0, f); draw(); };
+  const draw = () => {
+    list.replaceChildren(...picked.map((f, i) => el('div', { class: 'thumb' },
+      el('img', { src: f.thumb, alt: '' }),
+      el('div', { class: 'thumb-name' }, `${i + 1}. ${f.file.name}`),
+      el('div', { class: 'thumb-btns' },
+        el('button', { class: 'btn small', type: 'button', title: 'למעלה', disabled: i === 0, onclick: () => move(i, -1) }, '▲'),
+        el('button', { class: 'btn small', type: 'button', title: 'למטה', disabled: i === picked.length - 1, onclick: () => move(i, 1) }, '▼'),
+        el('button', { class: 'btn small', type: 'button', title: 'הסר', onclick: () => { URL.revokeObjectURL(f.thumb); picked.splice(i, 1); draw(); } }, '✕')))));
+    const per = dbl.checked ? PER_SHOT.double : PER_SHOT[mode.value];
+    est.textContent = picked.length
+      ? `${picked.length} צילומים · עלות משוערת ~$${(picked.length * per).toFixed(2)} · הסדר כאן = הסדר בטבלה`
+      : 'בחר את צילומי המסך מהגלריה – אפשר כמה ביחד.';
+    go.disabled = !picked.length;
+  };
+  input.addEventListener('change', () => {
+    [...input.files].forEach((file) => picked.push({ file, thumb: URL.createObjectURL(file) }));
+    input.value = '';
+    draw();
+  });
+  mode.addEventListener('change', draw);
+  dbl.addEventListener('change', async () => {
+    if (dbl.checked && !(await confirmModal({
+      title: '🔁 קריאה כפולה',
+      body: 'כל צילום ייקרא ע״י <b>שני מודלים (Sonnet + Opus)</b> וכל הבדל ביניהם יסומן בצהוב.<br>זה לוקח יותר זמן ועולה בערך פי 3 (~$0.06 לצילום במקום ~$0.02).<br>מומלץ כשמסך האפליקציה השתנה או כשהצילומים לא חדים.',
+      okText: 'הפעל קריאה כפולה',
+    }))) dbl.checked = false;
+    draw();
+  });
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    const progress = (t) => { status.textContent = t; toast(t, { ms: 0 }); };
+    try { await runPhotoImport(picked.map((f) => f.file), { mode: mode.value, double: dbl.checked }, progress); }
+    catch (e) { console.error(e); toast(errText(e), { err: true, ms: 8000 }); }
+    finally { go.disabled = !picked.length; status.textContent = ''; }
+  });
+  draw();
+  return el('div', {},
+    el('p', { class: 'muted' }, 'Claude קורא את צילומי המסך מאפליקציית המשלוחים ובונה את אותה טבלה. כל צילום נקרא בנפרד, ושדות לא ודאיים מסומנים בצהוב עם קישור לצילום.'),
+    el('button', { class: 'btn', type: 'button', onclick: () => input.click() }, '🖼️ בחר צילומים'), input,
+    list, est,
+    el('label', { class: 'field' }, 'אופן קריאה', mode),
+    el('label', { class: 'switch', style: 'margin-top:10px' }, dbl, el('span', {}, '🔁 קריאה כפולה (Sonnet + Opus) – להצלבה')),
+    status,
+    el('div', { class: 'sheet-actions' }, go),
+  );
+}
+
+// ------------------------------------------------------------------ import: checks (text + screenshots)
+const FIELDS = COLS.map(([k]) => k);
+const FIELD_LABEL = Object.fromEntries(COLS);
+const HEBREW = /[֐-׿]/;
+const idShape = (id) => String(id).replace(/[0-9]/g, '9').replace(/[A-Za-z]/g, 'A');
+const errText = (e) => e?.message || String(e);
+
+// The usual shipment-number pattern of this batch (e.g. "99999999"), when most numbers share it.
+function commonIdShape(ids) {
+  const shapes = ids.filter(Boolean).map(idShape);
+  if (shapes.length < 3) return null;
+  const counts = new Map();
+  shapes.forEach((s) => counts.set(s, (counts.get(s) || 0) + 1));
+  const [shape, n] = [...counts].sort((a, b) => b[1] - a[1])[0];
+  return n / shapes.length >= 0.6 ? shape : null;
+}
+
+// Shipment numbers may contain letters. Only an empty number stops the import ('stop');
+// 'bad' = red, probably mixed-up columns (asks once on confirm); 'warn' = yellow, unusual.
+function shipmentIssue(id, shape) {
+  const v = String(id || '').trim();
+  if (!v) return { level: 'stop', msg: 'חסר מספר משלוח – חובה למלא' };
+  if (HEBREW.test(v) || /\s/.test(v)) return { level: 'bad', msg: 'עברית/רווח במספר משלוח – עמודות מעורבבות?' };
+  if (!/^[A-Za-z0-9-]{4,20}$/.test(v)) return { level: 'warn', msg: 'מספר משלוח בפורמט חריג' };
+  if (shape && idShape(v) !== shape) return { level: 'warn', msg: 'פורמט שונה משאר מספרי המשלוח' };
+  return null;
+}
+
+function editDistance(a, b) {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0];
+    d[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const keep = d[j];
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = keep;
+    }
+  }
+  return d[b.length];
+}
+
+// Street not in the city's official list → yellow, with the closest official name as a suggestion.
+function streetIssue(street, list) {
+  if (!street || !list?.length) return null;
+  const n = norm(street);
+  if (list.some((s) => norm(s) === n)) return null;
+  let best = null, bestD = Infinity;
+  for (const s of list) { const dd = editDistance(n, norm(s)); if (dd < bestD) { bestD = dd; best = s; } }
+  const suggestion = bestD <= Math.max(2, Math.round(n.length / 3)) ? best : maps.streetSuggest(list, street, 1)[0] || null;
+  return { level: 'warn', msg: 'הרחוב לא ברשימה הרשמית' + (suggestion ? ` – אולי "${suggestion}"?` : ''), suggestion };
+}
+
+// Per-field flags of a preview row: { field: [{ level, msg, suggestion? }] }.
+// Model flags (uncertain / conflicting reads) disappear once the cell is edited or accepted.
+function rowFlags(r, ctx) {
+  const f = {};
+  const add = (k, x) => (f[k] ||= []).push(x);
+  const si = shipmentIssue(r.shipmentId, ctx.shape);
+  if (si) add('shipmentId', si);
+  if (ctx.photo) {
+    const st = streetIssue(r.street, ctx.streets[r.city || S.settings.defaultCity]);
+    if (st) add('street', st);
+    const untouched = (k) => String(r[k] ?? '') === String(r.orig?.[k] ?? '');
+    (r.uncertain || []).forEach((k) => untouched(k) && add(k, { level: 'warn', msg: 'Claude לא בטוח בקריאה' }));
+    Object.entries(r.conflicts || {}).forEach(([k, vals]) => untouched(k) && add(k, { level: 'warn', msg: `קריאות שונות: ${vals.map((v) => v || '(ריק)').join(' / ')}` }));
+  }
+  (r.accepted || []).forEach((k) => { if (f[k]) f[k] = f[k].filter((x) => x.level === 'stop'); });
+  Object.keys(f).forEach((k) => { if (!f[k].length) delete f[k]; });
+  return f;
+}
+const worstLevel = (list) => (list.some((x) => x.level !== 'warn') ? 'bad' : 'warn');
+const isEdited = (r) => !!r.orig && FIELDS.some((k) => String(r[k] ?? '') !== String(r.orig[k] ?? ''));
+
+async function checkContext(rows, photo) {
+  const ctx = { photo, shape: commonIdShape(rows.map((r) => r.shipmentId)), streets: {} };
+  if (photo) {
+    const cities = [...new Set(rows.map((r) => r.city || S.settings.defaultCity))];
+    await Promise.all(cities.map(async (c) => { ctx.streets[c] = await ensureStreets(c); }));
+  }
+  return ctx;
+}
+
+// Missing app-order numbers (#), with the screenshots on both sides of each gap.
+function gapIssues(rows) {
+  const at = new Map();
+  rows.forEach((r) => { const n = parseInt(r.appOrder, 10); if (n > 0 && !at.has(n)) at.set(n, r.src?.photo ?? null); });
+  if (!at.size) return [];
+  const max = Math.max(...at.keys());
+  const out = [];
+  for (let k = 1; k <= max; k++) {
+    if (at.has(k)) continue;
+    let e = k;
+    while (!at.has(e + 1)) e++;
+    out.push({ from: k, to: e, lo: k > 1 ? k - 1 : null, hi: e + 1, pl: k > 1 ? at.get(k - 1) : null, ph: at.get(e + 1) });
+    k = e;
+  }
+  return out;
+}
+function gapText(g) {
+  const what = g.from === g.to ? `#${g.from}` : `#${g.from}–#${g.to}`;
+  if (g.lo == null) return `חסר ${what} – לפני #${g.hi} (צילום ${g.ph}). אולי תחילת הרשימה לא צולמה`;
+  if (g.pl === g.ph) return `חסר ${what} – בתוך צילום ${g.pl} (בין #${g.lo} ל-#${g.hi}). אולי # נקרא לא נכון`;
+  return `חסר ${what} – צילום ${g.pl} מסתיים ב-#${g.lo} וצילום ${g.ph} מתחיל ב-#${g.hi}. כנראה לא צולם`;
+}
+
+// ------------------------------------------------------------------ import from screenshots (Claude Vision)
+const READ_MODES = { auto: '🧠 אוטומטי – Sonnet, ו-Opus כשיש ספק', sonnet: '⚡ Sonnet בלבד (זול)', opus: '🎯 Opus בלבד (הכי מדויק)' };
+const MODEL_LABEL = { sonnet: 'Sonnet', opus: 'Opus' };
+const READ_PRICE = { sonnet: [2, 10], opus: [4, 20] };           // $ per million tokens: input, output
+const PER_SHOT = { auto: 0.025, sonnet: 0.02, opus: 0.04, double: 0.06 };
+const IMPORT_TTL = 14 * 86400000;
+
+// Full resolution for the model (up to 2576px on the long edge), JPEG 0.9.
+async function prepareImage(file) {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, 2576 / Math.max(bmp.width, bmp.height));
+  const c = el('canvas', { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close?.();
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('המרת התמונה נכשלה'))), 'image/jpeg', 0.9));
+}
+
+// Run fn over items, at most n at a time.
+async function pool(items, n, fn) {
+  let i = 0;
+  const worker = async () => { while (i < items.length) { const k = i++; await fn(items[k], k); } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
+}
+
+async function readPhoto(p, model) {
+  if (p.reads[model]) return p.reads[model];
+  const r = await S.db.extract({ path: p.path, model });
+  p.reads[model] = r;
+  S.db.incUsage('extract_' + model).catch(() => {});
+  if (r.usage) {
+    S.db.incUsage('extractIn_' + model, r.usage.input || 0).catch(() => {});
+    S.db.incUsage('extractOut_' + model, r.usage.output || 0).catch(() => {});
+  }
+  return r;
+}
+
+// Prepare, upload and read screenshots – one request per screenshot, 3 in parallel.
+// Automatic mode: every screenshot with a warning sign gets a second read by Opus.
+async function readPhotos(sess, list, progress) {
+  const models = sess.mode === 'opus' ? ['opus'] : sess.double ? ['sonnet', 'opus'] : ['sonnet'];
+  let done = 0;
+  progress(`מכין ${list.length} צילומים…`);
+  await pool(list, 3, async (p) => {
+    try {
+      if (!p.path) {
+        p.blob = await prepareImage(p.file);
+        p.url = URL.createObjectURL(p.blob);
+        p.path = await S.db.uploadImportPhoto(sess.id, p.n, p.blob);
+      }
+      await Promise.all(models.map((mdl) => readPhoto(p, mdl)));
+      p.error = null;
+    } catch (e) {
+      console.warn('read photo', p.n, e);
+      p.error = errText(e);
+    }
+    progress(`קורא צילומים ${++done}/${list.length}…`);
+  });
+  if (sess.mode !== 'auto' || sess.double) return;
+
+  const rows = buildRows(sess);
+  const ctx = await checkContext(rows, true);
+  const suspect = new Set();
+  rows.forEach((r) => { if (Object.keys(rowFlags(r, ctx)).length || r.notes.length) r.src.photos.forEach((n) => suspect.add(n)); });
+  gapIssues(rows).forEach((g) => { if (g.pl != null && g.pl === g.ph) suspect.add(g.pl); });
+  const again = sess.photos.filter((p) => suspect.has(p.n) && p.path && !p.reads.opus);
+  done = 0;
+  await pool(again, 3, async (p) => {
+    try { await readPhoto(p, 'opus'); } catch (e) { console.warn('opus re-read', p.n, e); }
+    progress(`בודק שוב ב-Opus ${++done}/${again.length}…`);
+  });
+}
+
+const cardKey = (id) => String(id || '').replace(/\s/g, '').toUpperCase();
+const sameVal = (k, a, b) => (k === 'shipmentId' ? cardKey(a) === cardKey(b) : k === 'appOrder' ? (+a || 0) === (+b || 0) : norm(a) === norm(b));
+function cardValues(c) {
+  return {
+    appOrder: +c.appOrder > 0 ? String(c.appOrder) : '',
+    shipmentId: String(c.shipmentId || '').replace(/\s/g, ''),
+    name: c.name || '', street: c.street || '', houseNo: c.houseNo || '',
+    city: c.city || S.settings.defaultCity,
+    ref: c.ref && c.ref !== '0' ? c.ref : '',
+  };
+}
+
+// Pair every card of `base` with the same card read by the other model (same screenshot).
+function alignCards(base, other) {
+  if (!other) return { pairs: base.map(() => null), extra: [] };
+  if (other.length === base.length) return { pairs: other.slice(), extra: [] };
+  const left = new Set(other.map((_, i) => i));
+  const pairs = base.map((c) => {
+    const j = [...left].find((i) => cardKey(c.shipmentId) && cardKey(other[i].shipmentId) === cardKey(c.shipmentId))
+      ?? [...left].find((i) => c.appOrder > 0 && other[i].appOrder === c.appOrder);
+    if (j == null) return null;
+    left.delete(j);
+    return other[j];
+  });
+  return { pairs, extra: [...left].map((i) => other[i]) };
+}
+
+// The cards of one screenshot. When both models read it, Opus wins and every difference is kept.
+function photoCards(p) {
+  const o = p.reads.opus?.cards, s = p.reads.sonnet?.cards;
+  const base = o || s || [], other = o && s ? s : null;
+  const top = o ? 'opus' : 'sonnet';
+  const { pairs, extra } = alignCards(base, other);
+  const out = base.map((c, i) => {
+    const alt = pairs[i], v = cardValues(c);
+    const reads = [{ model: top, ...v }];
+    const conflicts = {};
+    if (alt) {
+      const av = cardValues(alt);
+      reads.push({ model: 'sonnet', ...av });
+      FIELDS.forEach((k) => { if (!sameVal(k, v[k], av[k])) conflicts[k] = [v[k], av[k]]; });
+    }
+    return { c, reads, conflicts, uncertain: c.uncertain || [], notes: other && !alt ? ['נקרא רק ע״י Opus'] : [] };
+  });
+  extra.forEach((c) => out.push({ c, reads: [{ model: 'sonnet', ...cardValues(c) }], conflicts: {}, uncertain: [], notes: ['נקרא רק ע״י Sonnet'] }));
+  return out.sort((a, b) => a.c.yPct - b.c.yPct);
+}
+
+// Rows in screenshot order (1 top→bottom, then 2 …). A card seen in two overlapping screenshots is one
+// row; the second reading confirms it or marks the differences.
+function buildRows(sess) {
+  const rows = [], byId = new Map();
+  for (const p of sess.photos) {
+    if (!p.reads.sonnet && !p.reads.opus) continue;
+    photoCards(p).forEach((pc, pos) => {
+      const v = cardValues(pc.c);
+      const at = { yPct: pc.c.yPct, hPct: pc.c.hPct };
+      const reads = pc.reads.map((x) => ({ ...x, photo: p.n }));
+      const key = cardKey(v.shipmentId);
+      const ex = key && byId.get(key);
+      if (!ex) {
+        const row = {
+          ...v, orig: { ...v }, reads, uncertain: [...pc.uncertain], conflicts: { ...pc.conflicts }, notes: [...pc.notes], accepted: [],
+          src: { photo: p.n, photos: [p.n], name: p.name, pos, at: { [p.n]: at }, partial: !!pc.c.partial },
+          addedLater: p.n > sess.baseCount,
+        };
+        rows.push(row);
+        if (key) byId.set(key, row);
+        return;
+      }
+      ex.src.photos.push(p.n);
+      ex.src.at[p.n] = at;
+      ex.reads.push(...reads);
+      ex.addedLater &&= p.n > sess.baseCount;
+      if (ex.src.partial && !pc.c.partial) {
+        // The first sighting was cut at the screenshot edge – the full card wins.
+        FIELDS.forEach((k) => { if (v[k]) { ex[k] = v[k]; ex.orig[k] = v[k]; } });
+        Object.assign(ex, { uncertain: [...pc.uncertain], conflicts: { ...pc.conflicts } });
+        Object.assign(ex.src, { photo: p.n, name: p.name, pos, partial: false });
+        return;
+      }
+      FIELDS.forEach((k) => {
+        if (!v[k] || sameVal(k, ex[k], v[k])) return;
+        if (!ex[k]) { ex[k] = v[k]; ex.orig[k] = v[k]; return; }
+        ex.conflicts[k] = [...new Set([...(ex.conflicts[k] || [ex[k]]), v[k]])];
+      });
+      // Still uncertain only if the second sighting is unsure too.
+      ex.uncertain = ex.uncertain.filter((k) => pc.uncertain.includes(k));
+    });
+  }
+  // Rows that exist only in screenshots added later (➕) go where their # belongs.
+  rows.filter((r) => r.addedLater && +r.appOrder > 0).forEach((r) => {
+    rows.splice(rows.indexOf(r), 1);
+    let at = -1;
+    rows.forEach((x, i) => { if (+x.appOrder > 0 && +x.appOrder < +r.appOrder) at = i; });
+    rows.splice(at + 1, 0, r);
+  });
+  return rows;
+}
+
+async function runPhotoImport(files, { mode, double }, progress) {
+  const sess = {
+    id: `imp-${Date.now().toString(36)}`, mode, double, baseCount: files.length, ignoredGaps: [],
+    photos: files.map((file, i) => ({ n: i + 1, name: file.name, file, reads: {} })),
+  };
+  await readPhotos(sess, sess.photos, progress);
+  if (!sess.photos.some((p) => p.reads.sonnet || p.reads.opus)) throw new Error('אף צילום לא נקרא: ' + (sess.photos.find((p) => p.error)?.error || ''));
+  await openPhotoPreview(sess);
+  $('#toast').hidden = true;
+}
+
+async function openPhotoPreview(sess, carry = null) {
+  const rows = buildRows(sess);
+  if (carry) {
+    // Keep what was already fixed in the table before more screenshots were added.
+    rows.forEach((r) => {
+      const c = carry.get(cardKey(r.orig.shipmentId));
+      if (c) { Object.assign(r, c.vals); r.accepted = c.accepted; r.checked = c.checked; }
+    });
+  }
+  previewSheet(rows, { sess, ctx: await checkContext(rows, true) });
+}
+
+// Screenshots, scrolled to the card and highlighted. `top(close)` may add an editor above them.
+function shotSheet({ title, shots, top = null }) {
+  openModal((m, close) => {
+    m.append(el('h2', {}, title));
+    if (top) m.append(top(close));
+    const wrap = el('div', { class: 'shots' + (shots.length > 1 ? ' two' : '') });
+    shots.forEach((s) => {
+      const img = el('img', { alt: `צילום ${s.n}` });
+      const scroll = el('div', { class: 'shot-scroll' }, el('div', { class: 'shot-frame' }, img,
+        s.yPct != null ? el('div', { class: 'shot-mark', style: `top:${s.yPct}%;height:${Math.max(4, s.hPct || 12)}%` }) : null));
+      const box = el('div', { class: 'shot' }, el('div', { class: 'shot-cap' }, `📷 צילום ${s.n}${s.name ? ' · ' + s.name : ''}`), scroll);
+      img.addEventListener('load', () => { scroll.scrollTop = Math.max(0, img.clientHeight * (s.yPct || 0) / 100 - scroll.clientHeight / 3); });
+      Promise.resolve(s.url || s.getUrl?.()).then((u) => {
+        if (u) img.src = u;
+        else box.append(el('p', { class: 'muted' }, 'הצילום כבר לא זמין (נמחק אחרי 14 יום).'));
+      });
+      wrap.append(box);
+    });
+    m.append(wrap, el('div', { class: 'sheet-actions' }, el('button', { class: 'btn', type: 'button', onclick: close }, 'סגור')));
+  });
+}
+
+const rowShots = (sess, r) => r.src.photos.map((n) => {
+  const p = sess.photos.find((q) => q.n === n);
+  return { n, name: p?.name, url: p?.url, ...r.src.at[n] };
+});
+
+// Fix one flagged cell next to its screenshot.
+function fixCellSheet(sess, x, field, done) {
+  const r = x.r;
+  shotSheet({
+    title: `${FIELD_LABEL[field]} · שורה ${x.index + 1}${r.appOrder ? ` (#${r.appOrder})` : ''}`,
+    shots: rowShots(sess, r),
+    top: (close) => {
+      const input = el('input', { value: r[field] ?? '', dir: field === 'shipmentId' ? 'ltr' : null });
+      const flags = r.flags?.[field] || [];
+      const options = [...new Set([...(r.conflicts?.[field] || []), ...flags.map((f) => f.suggestion)].filter(Boolean))];
+      const box = el('div', { class: 'fix-box' },
+        flags.map((f) => el('div', { class: 'fix-msg ' + (f.level === 'warn' ? 'warn' : 'bad') }, (f.level === 'warn' ? '🟡 ' : '🔴 ') + f.msg)),
+        el('label', { class: 'field' }, 'הערך בטבלה', input),
+        options.length ? el('div', { class: 'chips' }, options.map((v) => el('button', { class: 'btn small', type: 'button', onclick: () => { input.value = v; } }, v))) : null,
+        el('div', { class: 'sheet-actions' },
+          el('button', { class: 'btn primary', type: 'button', onclick: () => {
+            const v = input.value.trim();
+            if (v === String(r[field] ?? '')) r.accepted = [...new Set([...r.accepted || [], field])];
+            r[field] = v;
+            x.tds[field].textContent = v;
+            close(); done();
+          } }, 'שמור'),
+          el('button', { class: 'btn', type: 'button', onclick: () => { r.accepted = [...new Set([...r.accepted || [], field])]; close(); done(); } }, '✓ נכון כפי שהוא')));
+      if (field === 'street') attachAutocomplete(input, () => r.city);
+      return box;
+    },
+  });
+}
+
+// ⓘ What each model read, why it was flagged, and before → after (with restore).
+function rowInfoSheet({ title, sub = '', reads = [], orig = {}, cur = {}, flags = [], notes = [], shots = [], onRestore = null }) {
+  openModal((m, close) => {
+    const cols = reads.map((x) => `${MODEL_LABEL[x.model] || x.model} · 📷${x.photo}`);
+    const tbody = el('tbody');
+    FIELDS.forEach((k) => {
+      const vals = reads.map((x) => x[k] ?? '');
+      const differ = new Set(vals.map((v) => (k === 'appOrder' ? +v || 0 : norm(v)))).size > 1;
+      const changed = String(cur[k] ?? '') !== String(orig[k] ?? '');
+      tbody.append(el('tr', { class: differ ? 'differ' : '' },
+        el('th', {}, FIELD_LABEL[k]),
+        ...vals.map((v) => el('td', {}, v || '—')),
+        el('td', { class: changed ? 'changed' : '' }, changed ? `${orig[k] || '—'} ← ${cur[k] || '—'}` : cur[k] || '—'),
+        el('td', {}, changed && onRestore ? el('button', { class: 'btn small', type: 'button', onclick: () => { onRestore(k); close(); } }, '↩ שחזר') : null)));
+    });
+    m.append(...[
+      el('h2', {}, title),
+      sub ? el('p', { class: 'muted' }, sub) : null,
+      flags.length || notes.length
+        ? el('div', { class: 'fix-box' }, notes.map((t) => el('div', { class: 'fix-msg warn' }, '🟡 ' + t)),
+          flags.map((f) => el('div', { class: 'fix-msg ' + (f.level === 'warn' ? 'warn' : 'bad') }, `${f.level === 'warn' ? '🟡' : '🔴'} ${FIELD_LABEL[f.field] || ''}: ${f.msg}`)))
+        : null,
+      el('div', { class: 'tbl-wrap' }, el('table', { class: 'preview info' },
+        el('thead', {}, el('tr', {}, el('th', {}, 'שדה'), ...cols.map((c) => el('th', {}, c)), el('th', {}, 'בטבלה (לפני ← אחרי)'), el('th', {}, ''))), tbody)),
+      el('div', { class: 'sheet-actions' },
+        shots.length ? el('button', { class: 'btn', type: 'button', onclick: () => shotSheet({ title: title + ' · צילום מקורי', shots }) }, '📷 צילום מקורי') : null,
+        el('button', { class: 'btn', type: 'button', onclick: close }, 'סגור')),
+    ].filter(Boolean));
+  });
+}
+const flagList = (flags) => Object.entries(flags || {}).flatMap(([field, list]) => list.map((f) => ({ field, level: f.level, msg: f.msg })));
+
+// After import: the source screenshot + import details, kept for 14 days.
+async function importInfoSheet(d) {
+  const rec = await S.db.getImport(d.importSrc.importId).catch(() => null);
+  const row = rec?.rows?.find((x) => String(x.shipmentId) === String(d.shipmentId));
+  if (!row) return toast('פרטי הייבוא כבר לא זמינים', { err: true });
+  const shots = (row.src?.photos || []).map((n) => {
+    const p = rec.photos?.find((q) => q.n === n);
+    return { n, name: p?.name, getUrl: () => (p ? S.db.photoUrl(p.path).catch(() => null) : null), ...(row.src.at?.[n] || {}) };
+  });
+  rowInfoSheet({
+    title: `ⓘ ייבוא · ${d.shipmentId}`,
+    sub: `יובא מצילומים ב-${fmtStamp(rec.createdAt)} · ${READ_MODES[rec.mode] || rec.mode}${rec.double ? ' · קריאה כפולה' : ''}`,
+    reads: row.reads, orig: row.orig, cur: row.final, flags: row.flags, notes: row.notes, shots,
+  });
+}
+
+// 🧪 Both models on the same screenshots; shows every field where they differ. Nothing is saved.
+function modelTestSheet() {
+  openModal((m) => {
+    const input = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+    const out = el('div');
+    const go = el('button', { class: 'btn primary', type: 'button', onclick: () => input.click() }, '🖼️ בחר צילומים והרץ');
+    m.append(
+      el('h2', {}, '🧪 בדיקת מודלים – Sonnet מול Opus'),
+      el('p', { class: 'muted' }, 'כל צילום נקרא ע״י שני המודלים, ומוצגים כל השדות שבהם הם שונים. לא נשמר כלום והצילומים נמחקים בסוף. עלות: ~$0.06 לצילום. מומלץ 5–6 צילומים מיום שהטבלה הנכונה שלו ידועה לך.'),
+      input, el('div', { class: 'sheet-actions' }, go), out,
+    );
+    input.addEventListener('change', async () => {
+      const files = [...input.files];
+      input.value = '';
+      if (!files.length) return;
+      go.disabled = true;
+      const sess = { id: `test-${Date.now().toString(36)}`, mode: 'test', double: true, baseCount: files.length, photos: files.map((file, i) => ({ n: i + 1, name: file.name, file, reads: {} })) };
+      try {
+        await readPhotos(sess, sess.photos, (t) => { out.textContent = t; });
+        out.replaceChildren(modelDiffReport(sess));
+      } catch (e) { out.textContent = errText(e); }
+      finally {
+        go.disabled = false;
+        S.db.deleteImportPhotos(sess.photos.map((p) => p.path).filter(Boolean)).catch(() => {});
+      }
+    });
+  });
+}
+
+function modelDiffReport(sess) {
+  let fields = 0, diffs = 0;
+  const sections = sess.photos.map((p) => {
+    const o = p.reads.opus?.cards, s = p.reads.sonnet?.cards;
+    if (!o || !s) return el('div', { class: 'danger-box' }, `צילום ${p.n} (${p.name}): ${p.error || 'לא נקרא ע״י שני המודלים'}`);
+    const { pairs, extra } = alignCards(o, s);
+    const lines = [];
+    o.forEach((c, i) => {
+      const alt = pairs[i];
+      if (!alt) { diffs++; lines.push([c.shipmentId || `#${c.appOrder}`, 'כל הכרטיס', '— לא נקרא', 'נקרא']); return; }
+      FIELDS.forEach((k) => {
+        fields++;
+        if (!sameVal(k, c[k], alt[k])) { diffs++; lines.push([c.shipmentId || '—', FIELD_LABEL[k], String(alt[k] ?? ''), String(c[k] ?? '')]); }
+      });
+    });
+    extra.forEach((c) => { diffs++; lines.push([c.shipmentId || `#${c.appOrder}`, 'כל הכרטיס', 'נקרא', '— לא נקרא']); });
+    return el('div', {},
+      el('h3', {}, `📷 ${p.n}. ${p.name} · Sonnet ${s.length} / Opus ${o.length} כרטיסים`),
+      lines.length
+        ? el('div', { class: 'tbl-wrap' }, el('table', { class: 'preview' },
+          el('thead', {}, el('tr', {}, ['משלוח', 'שדה', 'Sonnet', 'Opus'].map((h) => el('th', {}, h)))),
+          el('tbody', {}, lines.map((l) => el('tr', { class: 'differ' }, l.map((v) => el('td', {}, v || '—')))))))
+        : el('p', {}, '✓ זהים בכל השדות'));
+  });
+  return el('div', {},
+    el('p', {}, el('b', {}, `${diffs} הבדלים מתוך ${fields} שדות`), diffs ? ' – בדוק מול הטבלה הנכונה מי צדק.' : ' – Sonnet מספיק לצילומים האלה.'),
+    ...sections);
+}
+
+// Preview before import. Text rows as always; screenshot rows (sess) add yellow/red cells linked to the
+// screenshot, a 📷 source column, ⓘ details, an issue list, # gaps and ➕ add screenshot.
+function previewSheet(rows, { sess = null, ctx = null } = {}) {
+  const photoMode = !!sess;
+  ctx ||= { photo: false, shape: commonIdShape(rows.map((r) => r.shipmentId)), streets: {} };
   const existing = new Map(S.deliveries.map((d) => [String(d.shipmentId), d]));
+  const headerCount = photoMode ? Math.max(0, ...sess.photos.flatMap((p) => Object.values(p.reads).map((x) => x.headerCount || 0))) : 0;
   openModal((m, close) => {
     const seen = new Map();
     rows.forEach((r) => seen.set(r.shipmentId, (seen.get(r.shipmentId) || 0) + 1));
     const tbody = el('tbody');
     const table = el('table', { class: 'preview' },
-      el('thead', {}, el('tr', {}, el('th', {}, 'ייבא'), ...COLS.map(([, h]) => el('th', {}, h)), el('th', {}, 'הערות'))),
+      el('thead', {}, el('tr', {}, el('th', {}, 'ייבא'), ...COLS.map(([, h]) => el('th', {}, h)), el('th', {}, 'הערות'),
+        photoMode ? el('th', {}, '📷') : null, photoMode ? el('th', {}, 'ⓘ') : null)),
       tbody);
     const summary = el('p', { class: 'muted' });
+    const issuesBox = el('div', { class: 'issues' });
 
-    const rowEls = rows.map((r) => {
+    const rowEls = rows.map((r, index) => {
       const notes = [];
       let cls = '', include = true;
       if (!r.shipmentId || !r.street) { notes.push(el('span', { class: 'tag bad' }, 'חסר מספר משלוח/רחוב')); cls = 'bad'; include = false; }
-      else if (!/^\d{5,}$/.test(r.shipmentId) || (r.appOrder && !/^#?\d{1,3}$/.test(r.appOrder)) || (r.houseNo && !/^\d/.test(r.houseNo)) || /\d{5,}/.test(r.city)) {
+      else if ((r.appOrder && !/^#?\d{1,3}$/.test(r.appOrder)) || (r.houseNo && !/^\d/.test(r.houseNo)) || /\d{5,}/.test(r.city)) {
         notes.push(el('span', { class: 'tag bad' }, 'עמודות מוזזות? בדוק את השורה')); cls = 'bad'; include = false;
       }
       if (existing.has(r.shipmentId)) { notes.push(el('span', { class: 'tag warn' }, 'כבר קיים – יעודכן אם מסומן')); cls ||= 'dup'; include = false; }
-      if (seen.get(r.shipmentId) > 1) { notes.push(el('span', { class: 'tag warn' }, 'כפול בהדבקה')); cls ||= 'dup'; }
+      if (seen.get(r.shipmentId) > 1) { notes.push(el('span', { class: 'tag warn' }, photoMode ? 'כפול' : 'כפול בהדבקה')); cls ||= 'dup'; }
+      (r.notes || []).forEach((t) => notes.push(el('span', { class: 'tag warn' }, t)));
       const cb = el('input', { type: 'checkbox' });
-      cb.checked = include;
-      const tr = el('tr', { class: cls + (include ? '' : ' off') },
-        el('td', {}, cb),
-        ...COLS.map(([k]) => el('td', { contenteditable: 'true', dataset: { k } }, r[k] ?? '')),
-        el('td', {}, notes));
-      cb.addEventListener('change', () => { tr.classList.toggle('off', !cb.checked); upd(); });
-      tbody.append(tr);
-      return { tr, cb };
+      cb.checked = r.checked ?? include;
+      const tds = Object.fromEntries(COLS.map(([k]) => [k, el('td', { contenteditable: 'true', dataset: { k } }, r[k] ?? '')]));
+      const idTag = el('span');
+      const x = { r, index, cb, tds, idTag };
+      x.info = photoMode ? el('button', { class: 'icon-mini', type: 'button', title: 'פרטים', onclick: () => openInfo(x) }, 'ⓘ') : null;
+      x.tr = el('tr', { class: cls + (cb.checked ? '' : ' off') },
+        el('td', {}, cb), ...COLS.map(([k]) => tds[k]), el('td', {}, notes, idTag),
+        photoMode ? el('td', {}, el('button', { class: 'src-btn', type: 'button', title: r.src.name, onclick: () => openShots(x) }, `📷 ${r.src.photos.join('+')}/${sess.photos.length}`)) : null,
+        photoMode ? el('td', {}, x.info) : null);
+      Object.entries(tds).forEach(([k, td]) => {
+        td.addEventListener('input', () => { r[k] = td.textContent.trim(); });
+        td.addEventListener('blur', () => refresh());
+        td.addEventListener('click', () => { if (photoMode && r.flags?.[k]) { td.blur(); fixCellSheet(sess, x, k, refresh); } });
+      });
+      cb.addEventListener('change', () => { x.tr.classList.toggle('off', !cb.checked); refresh(); });
+      tbody.append(x.tr);
+      return x;
     });
-    const upd = () => (summary.textContent = `${rowEls.filter((x) => x.cb.checked).length} מתוך ${rows.length} שורות מסומנות לייבוא. אפשר לערוך כל תא לפני האישור.`);
-    upd();
+
+    const paintRow = (x) => {
+      const r = x.r;
+      r.flags = rowFlags(r, ctx);
+      r.hadIssue ||= Object.keys(r.flags).length > 0 || !!r.notes?.length;
+      Object.entries(x.tds).forEach(([k, td]) => {
+        const fl = r.flags[k];
+        td.classList.toggle('cell-warn', !!fl && worstLevel(fl) === 'warn');
+        td.classList.toggle('cell-bad', !!fl && worstLevel(fl) === 'bad');
+        td.title = fl ? fl.map((f) => f.msg).join('\n') + (photoMode ? '\n(לחץ לצילום)' : '') : '';
+      });
+      const id = r.flags.shipmentId?.find((f) => f.level !== 'stop');
+      x.idTag.replaceChildren(id ? el('span', { class: 'tag ' + (id.level === 'warn' ? 'warn' : 'bad') }, id.msg) : '');
+      if (x.info) x.info.hidden = !(r.hadIssue || isEdited(r));
+    };
+    const rowName = (x) => `שורה ${x.index + 1}${x.r.appOrder ? ` (#${x.r.appOrder})` : ''}`;
+    const renderIssues = () => {
+      if (!photoMode) return;
+      const items = [];
+      const item = (level, text, ...actions) => items.push(el('div', { class: 'issue ' + level }, el('span', {}, (level === 'warn' ? '🟡 ' : '🔴 ') + text),
+        ...actions.map(([label, fn]) => el('button', { class: 'btn small', type: 'button', onclick: fn }, label))));
+      sess.photos.filter((p) => p.error).forEach((p) => item('bad', `צילום ${p.n} (${p.name}) לא נקרא: ${p.error}`, ['🔁 נסה שוב', () => reread([p])]));
+      if (headerCount && headerCount !== rows.length) item('warn', `באפליקציה כתוב ${headerCount} מסירות, ונקראו ${rows.length}`, ['➕ הוסף צילום', addPhotos]);
+      gapIssues(rows).filter((g) => !sess.ignoredGaps.includes(g.from)).forEach((g) =>
+        item('warn', gapText(g), ['➕ הוסף צילום', addPhotos], ['התעלם', () => { sess.ignoredGaps.push(g.from); renderIssues(); }]));
+      rowEls.forEach((x) => {
+        (x.r.notes || []).forEach((t) => item('warn', `${rowName(x)}: ${t}`, ['הצג', () => openShots(x)]));
+        Object.entries(x.r.flags || {}).forEach(([k, fl]) => fl.forEach((f) =>
+          item(f.level === 'warn' ? 'warn' : 'bad', `${rowName(x)} · ${FIELD_LABEL[k]}: ${f.msg}`, ['הצג', () => showCell(x, k)])));
+      });
+      issuesBox.replaceChildren(items.length
+        ? el('details', { open: true }, el('summary', {}, `⚠️ ${items.length} לבדיקה`), el('div', { class: 'issue-list' }, items))
+        : el('div', { class: 'ok-box' }, '✓ לא נמצאו בעיות – כל השדות נקראו בוודאות'));
+    };
+    const upd = () => {
+      const opusAgain = photoMode && sess.mode === 'auto' && !sess.double ? sess.photos.filter((p) => p.reads.sonnet && p.reads.opus).length : 0;
+      summary.textContent = `${rowEls.filter((x) => x.cb.checked).length} מתוך ${rows.length} שורות מסומנות לייבוא. אפשר לערוך כל תא לפני האישור.` +
+        (photoMode ? ` · ${sess.photos.length} צילומים${opusAgain ? ` · ${opusAgain} נבדקו שוב ב-Opus` : ''}${sess.double ? ' · קריאה כפולה' : ''}` : '');
+    };
+    function refresh() {
+      ctx.shape = commonIdShape(rows.map((r) => r.shipmentId));
+      rowEls.forEach(paintRow);
+      renderIssues();
+      upd();
+    }
+    const showCell = (x, k) => {
+      x.tr.scrollIntoView({ block: 'center' });
+      fixCellSheet(sess, x, k, refresh);
+    };
+    const openShots = (x) => shotSheet({ title: `📷 ${rowName(x)} · ${x.r.name || x.r.shipmentId}`, shots: rowShots(sess, x.r) });
+    const openInfo = (x) => rowInfoSheet({
+      title: `ⓘ ${rowName(x)} · ${x.r.shipmentId || ''}`, reads: x.r.reads, orig: x.r.orig, cur: x.r,
+      flags: flagList(x.r.flags), notes: x.r.notes, shots: rowShots(sess, x.r),
+      onRestore: (k) => { x.r[k] = x.r.orig[k]; x.tds[k].textContent = x.r[k]; x.r.accepted = (x.r.accepted || []).filter((a) => a !== k); refresh(); },
+    });
+    // Remember fixes by the originally read shipment number, so re-reading keeps them.
+    const harvest = () => new Map(rowEls.map((x) => [cardKey(x.r.orig.shipmentId), {
+      vals: Object.fromEntries(FIELDS.filter((k) => x.r[k] !== x.r.orig[k]).map((k) => [k, x.r[k]])),
+      accepted: x.r.accepted || [], checked: x.cb.checked,
+    }]));
+    const reread = async (photos, isNew = false) => {
+      const carry = harvest();
+      try {
+        await readPhotos(sess, photos, (t) => toast(t, { ms: 0 }));
+        $('#toast').hidden = true;
+        if (isNew && photos.every((p) => p.error)) return toast('הצילום לא נקרא: ' + photos[0].error, { err: true, ms: 7000 });
+        close();
+        await openPhotoPreview(sess, carry);
+      } catch (e) { toast(errText(e), { err: true, ms: 7000 }); }
+    };
+    const addPhotos = () => {
+      const inp = el('input', { type: 'file', accept: 'image/*', multiple: true });
+      inp.addEventListener('change', () => {
+        const start = sess.photos.length;
+        const added = [...inp.files].map((file, i) => ({ n: start + i + 1, name: file.name, file, reads: {} }));
+        if (!added.length) return;
+        sess.photos.push(...added);
+        reread(added, true);
+      });
+      inp.click();
+    };
 
     const confirm = async () => {
-      const chosen = rowEls.filter((x) => x.cb.checked).map(({ tr }) => {
-        const r = {};
-        tr.querySelectorAll('td[data-k]').forEach((td) => (r[td.dataset.k] = td.textContent.trim()));
-        return r;
-      }).filter((r) => r.shipmentId && r.street);
+      rowEls.forEach((x) => Object.entries(x.tds).forEach(([k, td]) => (x.r[k] = td.textContent.trim())));
+      refresh();
+      const chosen = rowEls.filter((x) => x.cb.checked);
       if (!chosen.length) return toast('לא סומנו שורות', { err: true });
+      const empty = chosen.filter((x) => !x.r.shipmentId);
+      if (empty.length) {
+        empty[0].tr.scrollIntoView({ block: 'center' });
+        return toast(`${empty.length} שורות מסומנות בלי מספר משלוח – יש למלא או לבטל את הסימון`, { err: true, ms: 6000 });
+      }
+      const red = chosen.filter((x) => Object.values(x.r.flags).flat().some((f) => f.level === 'bad'));
+      if (red.length && !(await confirmModal({
+        title: '🔴 אזהרה אדומה',
+        body: `${red.length} שורות עם אזהרה אדומה (${red.map((x) => (x.r.appOrder ? '#' + x.r.appOrder : 'שורה ' + (x.index + 1))).join(', ')}).<br>לייבא בכל זאת?`,
+        okText: 'ייבא', cancelText: 'חזור לתקן',
+      }))) return;
+      const rowsIn = chosen.map((x) => x.r).filter((r) => r.street);
+      if (!rowsIn.length) return toast('אין שורות עם רחוב לייבוא', { err: true });
       closeAll();
-      const docs = chosen.map((r) => {
+      const until = now() + IMPORT_TTL;
+      const docs = rowsIn.map((r) => {
         const base = {
           shipmentId: r.shipmentId, name: r.name, street: r.street, houseNo: r.houseNo,
           city: r.city || S.settings.defaultCity,
-          appOrder: r.appOrder === '' ? null : parseInt(r.appOrder.replace('#', ''), 10) || null,
+          appOrder: r.appOrder === '' ? null : parseInt(String(r.appOrder).replace('#', ''), 10) || null,
           ref: r.ref && r.ref !== '0' ? r.ref : null,
+          ...(photoMode ? { importSrc: { importId: sess.id, photo: r.src.photo, photos: r.src.photos, name: r.src.name, until } } : {}),
         };
         const ex = existing.get(r.shipmentId);
         if (ex) return addressKey(ex) === addressKey(base) ? base : { ...base, geoStatus: 'pending', lat: null, lng: null };
@@ -966,20 +1615,35 @@ function previewSheet(rows) {
       });
       if (!S.day) await S.db.saveDay(S.key, { date: S.date, version: S.version, createdAt: now(), hasInitialRoute: false });
       await S.db.putDeliveries(S.key, docs);
+      if (photoMode) {
+        // Import record for ⓘ after import (14 days): what was read, what was changed, and why it was flagged.
+        S.db.saveImport(sess.id, {
+          createdAt: now(), until, dayKey: S.key, mode: sess.mode, double: sess.double, headerCount,
+          photos: sess.photos.filter((p) => p.path).map((p) => ({ n: p.n, name: p.name, path: p.path, models: Object.keys(p.reads) })),
+          rows: rowsIn.map((r) => ({
+            shipmentId: r.shipmentId, dayKey: S.key, src: r.src, reads: r.reads, orig: r.orig,
+            final: Object.fromEntries(FIELDS.map((k) => [k, r[k] ?? ''])), edited: FIELDS.filter((k) => String(r[k] ?? '') !== String(r.orig[k] ?? '')),
+            flags: flagList(r.flags), notes: r.notes || [], accepted: r.accepted || [],
+          })),
+        }).catch((e) => console.warn('save import record', e));
+      }
       toast(`יובאו ${docs.length} משלוחים ✓`);
       const toGeo = docs.filter((d) => d.geoStatus === 'pending').map((d) => ({ ...existing.get(d.shipmentId), ...d }));
       await geocodeMany(toGeo);
     };
 
-    m.append(
+    m.append(...[
       el('h2', {}, `תצוגה מקדימה – ${rows.length} שורות`),
       summary,
+      photoMode ? issuesBox : null,
       el('div', { class: 'tbl-wrap' }, table),
       el('div', { class: 'sheet-actions' },
         el('button', { class: 'btn primary', type: 'button', onclick: confirm }, '✓ אשר ייבוא'),
+        photoMode ? el('button', { class: 'btn', type: 'button', onclick: addPhotos }, '➕ הוסף צילום') : null,
         el('button', { class: 'btn', type: 'button', onclick: close }, 'חזור לעריכה'),
       ),
-    );
+    ].filter(Boolean));
+    refresh();
   });
 }
 
@@ -1278,6 +1942,10 @@ async function settingsSheet() {
     const service = el('input', { type: 'number', min: '0', max: '1800', step: '15', value: S.settings.serviceSeconds, inputmode: 'numeric' });
     const traffic = el('input', { type: 'checkbox' });
     traffic.checked = S.settings.traffic !== false;
+    const readMode = el('select', {}, Object.entries(READ_MODES).map(([v, label]) => el('option', { value: v }, label)));
+    readMode.value = S.settings.readMode || 'auto';
+    const shots = (mdl) => usage?.['extract_' + mdl] || 0;
+    const readCost = Object.entries(READ_PRICE).reduce((sum, [mdl, [pin, pout]]) => sum + ((usage?.['extractIn_' + mdl] || 0) * pin + (usage?.['extractOut_' + mdl] || 0) * pout) / 1e6, 0);
     m.append(
       el('h2', {}, '⚙️ הגדרות'),
       el('label', { class: 'field' }, 'עיר ברירת מחדל', city),
@@ -1286,14 +1954,16 @@ async function settingsSheet() {
       el('label', { class: 'field' }, 'מנוע סידור מסלול', optimizer),
       el('label', { class: 'field' }, 'זמן עצירה ממוצע לכל כתובת (שניות)', service),
       el('label', { class: 'switch', style: 'margin-top:10px' }, traffic, el('span', {}, 'להתחשב בעומסי תנועה (Google)')),
+      el('label', { class: 'field' }, 'קריאת צילומים בייבוא (Claude)', readMode),
       el('p', { class: 'usage' }, `שימוש ב-Google החודש: ${usage?.geocode || 0} איתורים (חינם עד 10,000) · ${usage?.routeoptRequests || 0} חישובי מסלול, ${usage?.routeoptShipments || 0} משלוחים (חינם עד 5,000).`),
+      el('p', { class: 'usage' }, `קריאת צילומים החודש: Sonnet ${shots('sonnet')}, Opus ${shots('opus')} · עלות משוערת ~$${readCost.toFixed(2)}.`),
       el('p', { class: 'muted' }, S.db.mode === 'firebase' ? `מחובר כ: ${S.user.email || S.user.name}` : 'מצב הדגמה – הנתונים בדפדפן הזה בלבד.'),
       el('p', { class: 'muted' }, 'מנהל המערכת רואה את מצב המשלוחים שלך ואת המיקום האחרון שנקלט באפליקציה (ברענון מיקום ובעדכון סטטוס בלבד).'),
     );
     const save = async () => {
-      const next = { defaultCity: city.value.trim() || 'חולון', geocoder: geocoder.value, googleKey: key.value.trim(), optimizer: optimizer.value, serviceSeconds: Math.max(0, Math.min(1800, +service.value || 0)), traffic: traffic.checked };
+      const next = { defaultCity: city.value.trim() || 'חולון', geocoder: geocoder.value, googleKey: key.value.trim(), optimizer: optimizer.value, serviceSeconds: Math.max(0, Math.min(1800, +service.value || 0)), traffic: traffic.checked, readMode: readMode.value };
       if (next.geocoder === 'google' && !next.googleKey) return toast('לאיתור Google צריך מפתח API', { err: true });
-      S.settings = next;
+      S.settings = { ...S.settings, ...next };
       await S.db.setMeta('settings', next);
       maps.configure({ geocoderName: next.geocoder, googleKey: next.googleKey });
       closeAll(); toast('ההגדרות נשמרו ✓');
@@ -1365,6 +2035,7 @@ function menuSheet() {
       item('📅 ימים קודמים / בחירת תאריך', daysSheet),
       item('🗺️ מסלול מלא ב-Google Maps', segmentsSheet),
       item('📊 השוואת מנועים (Google מול חינמי)', compareSheet, !S.deliveries.length),
+      item('🧪 בדיקת מודלים לקריאת צילומים', modelTestSheet),
       item('📤 ייצוא CSV', exportCsv, false, false),
       item('⚙️ הגדרות', settingsSheet),
       item('🔗 הזמן חבר (קישור הרשמה)', inviteFriendSheet),
@@ -1561,13 +2232,36 @@ function bindUi() {
 }
 
 // The admin disabled this account: the data is locked by firestore.rules, so just explain.
-function setBlocked(blocked) {
+// reason: 'disabled' (can be re-enabled – the app reloads) or 'removed' (deleted by the superadmin).
+// Every open device has its own members/{uid} listener, so all sessions are kicked out together.
+function setBlocked(blocked, reason = 'disabled') {
   const was = S.blocked;
   S.blocked = blocked;
+  if (blocked) {
+    closeAll();
+    $('#blockedMsg').replaceChildren(el('b', {}, reason === 'removed' ? '⛔ המשתמש הוסר מהמערכת.' : '⛔ החשבון הושבת על ידי מנהל המערכת.'));
+    $('#blockedSub').textContent = reason === 'removed'
+      ? 'כדי לחזור ל-SmartRoute צריך קישור הזמנה חדש ממנהל.'
+      : 'לפרטים פנה למנהל. לאחר הפעלה מחדש האפליקציה תיפתח שוב.';
+    $('#blockedReload').hidden = reason === 'removed';
+  }
   $('#blocked').hidden = !blocked;
   $('#app').hidden = blocked || !S.user;
   $('#searchBar').hidden = blocked || !S.user;
   if (was && !blocked) location.reload(); // re-enabled: listeners were cut off, start fresh
+}
+
+// Signed-in user in the top bar: avatar (or initials) + first name. Click → menu.
+function renderUserChip(user) {
+  const chip = $('#userChip');
+  const name = String(user?.name || user?.email || '').trim();
+  const first = name.split(/[\s@]+/)[0] || '';
+  const initials = name.split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
+  chip.replaceChildren(
+    user?.photo ? el('img', { class: 'uc-av', src: user.photo, alt: '', referrerpolicy: 'no-referrer' }) : el('span', { class: 'uc-av' }, initials),
+    el('span', { class: 'uc-name' }, first));
+  chip.title = `${name}${user?.email && user.email !== name ? ' · ' + user.email : ''}`;
+  chip.hidden = !user;
 }
 
 async function boot() {
@@ -1575,6 +2269,7 @@ async function boot() {
   $('#blockedLogout').addEventListener('click', () => S.db.signOut());
   $('#blockedReload').addEventListener('click', () => location.reload());
   $('#noUserLogout').addEventListener('click', () => S.db.signOut());
+  $('#userChip').addEventListener('click', () => menuSheet());
   // Magic link (?invite=…): remember it through the Google sign-in and say so on the login card.
   $('#inviteNote').hidden = !captureInvite();
   try {
@@ -1598,6 +2293,7 @@ async function boot() {
     $('#noUser').hidden = true;
     if (!user) {
       $('#loading').hidden = true; $('#login').hidden = false; $('#app').hidden = true; $('#searchBar').hidden = true;
+      renderUserChip(null);
       setBlocked(false); S.unsubs.forEach((u) => u()); S.unsubs = []; return;
     }
     // Invite-only: only members (joined through an admin's magic link) may use SmartRoute.
@@ -1612,9 +2308,14 @@ async function boot() {
     $('#searchBar').hidden = false;
     $('#inviteNote').hidden = true;
     if (gate.state === 'joined') toast(`ברוך הבא ל-SmartRoute! 🎉${gate.inviter ? ` הצטרפת בהזמנת ${gate.inviter}.` : ''}`, { ms: 6000 });
+    renderUserChip(user);
+    const superUser = isSuperEmail(user.email);
+    let hadMember = !!gate.member;
     S.accessUnsub = S.db.watchMember((mem) => {
-      if (mem) S.member = mem;
-      setBlocked(mem?.disabled === true && !isSuperEmail(user.email));
+      if (mem) { S.member = mem; hadMember = true; }
+      if (superUser) return;
+      if (!mem && hadMember) setBlocked(true, 'removed');       // deleted by the superadmin
+      else setBlocked(mem?.disabled === true, 'disabled');
     });
     S.db.touchProfile(user).catch(() => {});
     const saved = await S.db.getMeta('settings').catch(() => null);

@@ -19,6 +19,13 @@ async function firebaseBackend(config) {
     ignoreUndefinedProperties: true,
     localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }),
   });
+  // ?emu=1 → local Firebase emulators (tests only; see tests/README.md). Never set in real use.
+  if (new URLSearchParams(location.search).has('emu')) {
+    auth.connectAuthEmulator(a, 'http://127.0.0.1:9099', { disableWarnings: true });
+    fs.connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    // Test hook: sign in a seeded emulator test account (tests/seed.mjs) without the Google popup.
+    window.__emuSignIn = (email, password) => auth.signInWithEmailAndPassword(a, email, password);
+  }
   let uid = null;
   const u = (...p) => [db, appInfo?.dataRoot || 'users', uid, ...p];
   const dayRef = (date) => fs.doc(...u('days', date));
@@ -61,6 +68,8 @@ async function firebaseBackend(config) {
     async getDeliveries(date) { const s = await fs.getDocs(delCol(date)); return s.docs.map((d) => d.data()); },
     putDeliveries: (date, arr) => commitChunks(arr.map((d) => (b) => b.set(delRef(date, d.shipmentId), d, { merge: true }))),
     updateDelivery: (date, id, patch) => fs.updateDoc(delRef(date, id), patch),
+    // Status change + one history entry, appended on the server so concurrent devices don't overwrite each other.
+    appendHistory: (date, id, patch, entry) => fs.updateDoc(delRef(date, id), { ...patch, history: fs.arrayUnion(entry) }),
     updateMany: (date, list) => commitChunks(list.map(({ id, patch }) => (b) => b.update(delRef(date, id), patch))),
     deleteDeliveries: (date, ids) => commitChunks(ids.map((id) => (b) => b.delete(delRef(date, id)))),
 
@@ -102,15 +111,34 @@ async function firebaseBackend(config) {
       const call = f.httpsCallable(f.getFunctions(app, appInfo?.functionsRegion || 'europe-west1'), 'optimizeRoute', { timeout: 160000 });
       return (await call(payload)).data;
     },
+
+    // Screenshot import: photos live in Storage for 14 days, Claude reads them via extractShipments.
+    async uploadImportPhoto(importId, n, blob) {
+      const st = await storage();
+      const path = `${appInfo?.dataRoot || 'users'}/${uid}/imports/${importId}/${n}.jpg`;
+      await st.uploadBytes(st.ref(st.getStorage(app), path), blob, { contentType: blob.type || 'image/jpeg' });
+      return path;
+    },
+    async photoUrl(path) { const st = await storage(); return st.getDownloadURL(st.ref(st.getStorage(app), path)); },
+    async deleteImportPhotos(paths) { const st = await storage(); await Promise.all(paths.map((p) => st.deleteObject(st.ref(st.getStorage(app), p)).catch(() => {}))); },
+    async extract(payload) {
+      const f = await import(`${FB}/firebase-functions.js`);
+      const call = f.httpsCallable(f.getFunctions(app, appInfo?.functionsRegion || 'europe-west1'), 'extractShipments', { timeout: 190000 });
+      return (await call(payload)).data;
+    },
+    saveImport: (id, data) => fs.setDoc(fs.doc(...u('imports', id)), data, { merge: true }),
+    async getImport(id) { const s = await fs.getDoc(fs.doc(...u('imports', id))); return s.exists() ? s.data() : null; },
   };
 }
+let storageMod = null;
+const storage = () => (storageMod ||= import(`${FB}/firebase-storage.js`));
 
 // ---------------------------------------------------------------- Demo (this browser only)
 function demoBackend() {
   const KEY = 'smartroute.demo.v1';
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } };
   let st = Object.assign({ days: {}, meta: {}, geo: {} }, load());
-  const dayW = new Map(), delW = new Map();
+  const dayW = new Map(), delW = new Map(), photos = new Map();
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch { /* ignore */ } };
   const day = (date) => (st.days[date] ||= { doc: null, deliveries: {} });
@@ -140,6 +168,10 @@ function demoBackend() {
     getDeliveries: async (date) => clone(Object.values(st.days[date]?.deliveries || {})),
     putDeliveries: (date, arr) => write(date, (d) => arr.forEach((x) => { d.deliveries[x.shipmentId] = { ...(d.deliveries[x.shipmentId] || {}), ...clone(x) }; })),
     updateDelivery: (date, id, patch) => write(date, (d) => { if (d.deliveries[id]) Object.assign(d.deliveries[id], clone(patch)); }),
+    appendHistory: (date, id, patch, entry) => write(date, (d) => {
+      const x = d.deliveries[id];
+      if (x) Object.assign(x, clone(patch), { history: [...(x.history || []), clone(entry)] });
+    }),
     updateMany: (date, list) => write(date, (d) => list.forEach(({ id, patch }) => { if (d.deliveries[id]) Object.assign(d.deliveries[id], clone(patch)); })),
     deleteDeliveries: (date, ids) => write(date, (d) => ids.forEach((id) => delete d.deliveries[id])),
     getMeta: async (name) => (st.meta[name] ? clone(st.meta[name]) : null),
@@ -159,6 +191,17 @@ function demoBackend() {
       st.member = { ...(st.member || {}), primaryRef }; save();
     },
     setPrimaryRef: async (primaryRef) => { st.member = { ...(st.member || {}), primaryRef }; save(); },
+    // Screenshot import: photos stay in memory only. Reading needs the Cloud Function (Firebase);
+    // for local UI tests a page may define window.__smartrouteMockExtract(payload, blob).
+    async uploadImportPhoto(importId, n, blob) { const path = `demo/imports/${importId}/${n}.jpg`; photos.set(path, blob); return path; },
+    photoUrl: async (path) => (photos.has(path) ? URL.createObjectURL(photos.get(path)) : null),
+    deleteImportPhotos: async (paths) => paths.forEach((p) => photos.delete(p)),
+    async extract(payload) {
+      if (typeof window.__smartrouteMockExtract !== 'function') throw new Error('קריאת צילומים דורשת חיבור ל-Firebase (לא זמין במצב הדגמה)');
+      return window.__smartrouteMockExtract(payload, photos.get(payload.path));
+    },
+    saveImport: async (id, data) => { (st.imports ||= {})[id] = { ...(st.imports[id] || {}), ...clone(data) }; save(); },
+    getImport: async (id) => (st.imports?.[id] ? clone(st.imports[id]) : null),
   };
 }
 
