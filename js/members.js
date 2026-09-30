@@ -60,11 +60,10 @@ export async function ensureMember(db, user) {
 // ---------------------------------------------------------------- referral codes
 const slug = (s, max = 30) => String(s || '').toLowerCase().replace(/[^a-z0-9._]/g, '').replace(/^[._]+|[._]+$/g, '').slice(0, max);
 export const emailRefName = (email) => slug(String(email || '').split('@')[0]);
-// Google first name when it is written in Latin letters ("Gil Bitman" → "gil"); Hebrew names → '' (ask the user).
+// Google first name when it is written in Latin letters ("Gil Bitman" → "gil"); Hebrew names → '' (only the email ref is offered).
 export const nameRefName = (fullName) => {
   const first = String(fullName || '').trim().split(/\s+/)[0] || '';
   return /^[A-Za-z]{2,20}$/.test(first) ? first.toLowerCase() : '';
 };
-export const validShortName = (s) => /^[a-z]{2,20}$/.test(s);
 export const refId = (name, suffix) => `${name}-${suffix}`;
 export const registrationUrl = (ref) => `${access.siteUrl}Registration?ref=${encodeURIComponent(ref)}`;

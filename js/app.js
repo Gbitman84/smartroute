@@ -4,7 +4,7 @@ import * as maps from './maps/provider.js';
 import { solvePath } from './solver.js';
 import { wazeUrl, gmapsUrl, gmapsSegments } from './nav.js';
 import {
-  captureInvite, ensureMember, isSuperEmail, emailRefName, nameRefName, validShortName, refId, registrationUrl,
+  captureInvite, ensureMember, isSuperEmail, emailRefName, nameRefName, refId, registrationUrl,
 } from './members.js';
 import {
   $, el, esc, todayStr, fmtDate, fmtTime, fmtDist, fmtDur, norm, addressKey, fullAddress,
@@ -1414,28 +1414,23 @@ function inviteFriendSheet() {
       })));
     };
 
-    // First time: create the email ref and a short-name ref (asks for an English name when needed).
+    // First time: the member picks the main one of their two refs (both are created):
+    // by name ("gil-<suffix>", from the Google first name) or by email ("gbitman.bd-<suffix>").
+    // A non-English Google name (e.g. Hebrew) → only the email ref.
     const drawCreate = () => {
       const suffix = S.member.refSuffix;
-      const emailName = emailRefName(S.user.email) || 'user';
-      const shortIn = el('input', { value: nameRefName(S.user.name), dir: 'ltr', placeholder: 'gil', autocomplete: 'off', maxlength: 20 });
-      const preview = el('b', { dir: 'ltr' });
-      const upd = () => { shortIn.value = shortIn.value.toLowerCase().replace(/[^a-z]/g, ''); preview.textContent = refId(shortIn.value || '…', suffix); };
-      shortIn.addEventListener('input', upd); upd();
-      const pick = { value: 'name' };
-      const opt = (value, label, node) => {
-        const r = el('input', { type: 'radio', name: 'mainRef', value });
-        r.checked = value === pick.value;
-        r.addEventListener('change', () => (pick.value = value));
-        return el('label', { class: 'ref-opt' }, r, el('span', {}, label, ' ', node));
+      const refs = [{ id: refId(emailRefName(S.user.email) || 'user', suffix), kind: 'email' }];
+      const shortName = nameRefName(S.user.name);
+      if (shortName && refId(shortName, suffix) !== refs[0].id) refs.unshift({ id: refId(shortName, suffix), kind: 'name' });
+      let primary = refs[0].id;
+      const opt = (r) => {
+        const radio = el('input', { type: 'radio', name: 'mainRef', value: r.id });
+        radio.checked = r.id === primary;
+        radio.addEventListener('change', () => (primary = r.id));
+        return el('label', { class: 'ref-opt' }, radio, el('span', {}, r.kind === 'name' ? 'לפי שם: ' : 'לפי אימייל: ', el('b', { dir: 'ltr' }, r.id)));
       };
-      const go = el('button', { class: 'btn primary', type: 'button' }, 'צור את הקישורים שלי');
+      const go = el('button', { class: 'btn primary', type: 'button' }, refs.length > 1 ? 'צור את הקישורים שלי' : 'צור את הקישור שלי');
       go.addEventListener('click', async () => {
-        const short = shortIn.value;
-        if (!validShortName(short)) return toast('שם קצר באנגלית: 2–20 אותיות (a-z)', { err: true });
-        const refs = [{ id: refId(emailName, suffix), kind: 'email' }, { id: refId(short, suffix), kind: 'name' }];
-        if (refs[0].id === refs[1].id) refs.pop();
-        const primary = pick.value === 'email' || refs.length === 1 ? refs[0].id : refs[1].id;
         go.disabled = true;
         try {
           await S.db.createMyRefs(refs, primary);
@@ -1443,16 +1438,13 @@ function inviteFriendSheet() {
           drawRefs(await S.db.myRefs());
         } catch (e) {
           console.error(e);
-          toast('לא הצלחתי ליצור את הקישורים – אולי השם תפוס. נסה שם קצר אחר.', { err: true, ms: 6000 });
+          toast('לא הצלחתי ליצור את הקישורים: ' + e.message, { err: true, ms: 6000 });
           go.disabled = false;
         }
       });
       body.replaceChildren(
-        el('p', {}, 'יש לך שני קישורים אפשריים – שניהם יעבדו. בחר איזה מהם יהיה הראשי:'),
-        el('div', { class: 'radio-list' },
-          opt('name', 'לפי שם:', preview),
-          opt('email', 'לפי אימייל:', el('b', { dir: 'ltr' }, refId(emailName, suffix)))),
-        el('label', { class: 'field' }, 'שם קצר באנגלית (לקישור לפי שם)', shortIn),
+        el('p', {}, refs.length > 1 ? 'יש לך שני קישורים – שניהם יעבדו. בחר איזה מהם יהיה הראשי:' : 'זה קישור ההרשמה שלך:'),
+        el('div', { class: 'radio-list' }, refs.map(opt)),
         el('div', { class: 'sheet-actions' }, go));
     };
 
