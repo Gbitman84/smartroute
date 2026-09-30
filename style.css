@@ -113,14 +113,30 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .next-stop .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .next-stop .alt { font-size: 13px; opacity: .9; margin-top: 6px; }
 
+.map-bar { position: relative; margin: 10px 16px 0; }
 .map-toggle {
-  display: flex; justify-content: space-between; align-items: center; width: calc(100% - 32px); margin: 10px 16px 0;
+  display: flex; justify-content: space-between; align-items: center; width: 100%; margin: 0; padding-left: 58px !important;
   background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; font-weight: 500; cursor: pointer;
 }
 .map-toggle[aria-expanded="true"] { border-radius: var(--radius) var(--radius) 0 0; border-bottom: 0; }
 .map-toggle .chev { color: var(--muted); font-size: 14px; }
 .map-wrap { margin: 0 16px; position: relative; }
 #map { height: 38vh; min-height: 240px; border-radius: 0 0 var(--radius) var(--radius); border: 1px solid var(--line); z-index: 1; }
+/* ⛶ on the map bar (left end) → the map fills the screen; ✕ inside brings it back. */
+.map-full-btn {
+  position: absolute; left: 6px; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 42px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: inherit;
+  font-size: 20px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.map-exit-full {
+  position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 10px; z-index: 1000;
+  background: var(--card); color: inherit; border: 1px solid var(--line); border-radius: 999px;
+  padding: 9px 14px; font: inherit; font-weight: 600; box-shadow: 0 2px 10px rgba(0,0,0,.35); cursor: pointer;
+}
+body.map-full { overflow: hidden; }
+body.map-full .map-wrap { position: fixed; inset: 0; margin: 0; z-index: 1500; background: var(--bg); } /* above .sticky-top (1000) */
+body.map-full #map { height: 100vh; height: 100dvh; min-height: 0; border: 0; border-radius: 0; }
+body.map-full .pick-hint { top: calc(60px + env(safe-area-inset-top)); }
 .pick-hint { position: absolute; top: 8px; right: 8px; left: 8px; z-index: 500; background: var(--warn); color: #fff; padding: 8px 10px; border-radius: 10px; font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .stop-marker { direction: ltr; background: var(--primary); color: #fff; border: 2px solid #fff; border-radius: 999px; min-width: 28px; height: 28px; padding: 0 5px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,.4); white-space: nowrap; }
 .stop-marker.temp { background: var(--warn); }

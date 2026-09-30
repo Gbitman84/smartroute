@@ -64,9 +64,13 @@
 
     <section id="nextStop" class="next-stop" hidden></section>
 
-    <button id="mapToggle" class="map-toggle" type="button" aria-expanded="false"><span>🗺️ מפה</span><span class="chev">הצג ▾</span></button>
+    <div class="map-bar">
+      <button id="mapToggle" class="map-toggle" type="button" aria-expanded="false"><span>🗺️ מפה</span><span class="chev">הצג ▾</span></button>
+      <button id="mapFullBtn" class="map-full-btn" type="button" title="מפה במסך מלא" aria-label="מפה במסך מלא">⛶</button>
+    </div>
     <section id="mapWrap" class="map-wrap" hidden>
       <div id="map"></div>
+      <button id="mapExitFull" class="map-exit-full" type="button" hidden>✕ יציאה ממסך מלא</button>
       <div id="pickHint" class="pick-hint" hidden>לחץ על המפה כדי לסמן את מיקום הכתובת <button id="pickCancel" class="btn small" type="button">ביטול</button></div>
     </section>
 

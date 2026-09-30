@@ -152,6 +152,7 @@ function onPopState() {
     return;
   }
   history.pushState({ smartroute: 'guard' }, '');
+  if (S.mapFull) { setMapFull(false); return; }
   if (S.pickFor) { S.pickFor = null; $('#pickHint').hidden = true; return; }
   if (S.search) { setSearch(''); return; }
   showExitPrompt();
@@ -731,6 +732,23 @@ function toggleMap(show = $('#mapWrap').hidden) {
     ensureMap();
     setTimeout(() => { S.map?.invalidateSize(); renderMap(); }, 50);
   }
+}
+
+// ⛶ Full-screen map (works from the hidden state too); ✕, Back or Esc return to how it was.
+function setMapFull(on) {
+  if (on === !!S.mapFull) return;
+  if (on) {
+    S.mapFull = { wasHidden: $('#mapWrap').hidden };
+    toggleMap(true);
+  }
+  document.body.classList.toggle('map-full', on);
+  $('#mapExitFull').hidden = !on;
+  if (!on) {
+    const { wasHidden } = S.mapFull;
+    S.mapFull = null;
+    if (wasHidden && !S.pickFor) toggleMap(false);
+  }
+  setTimeout(() => { S.map?.invalidateSize(); renderMap(); }, 60);
 }
 
 function startPick(d) {
@@ -2313,6 +2331,9 @@ function bindUi() {
   $('#routeBtn').addEventListener('click', routeSheet);
   $('#importBtn').addEventListener('click', importSheet);
   $('#mapToggle').addEventListener('click', () => toggleMap());
+  $('#mapFullBtn').addEventListener('click', () => setMapFull(true));
+  $('#mapExitFull').addEventListener('click', () => setMapFull(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.mapFull && !modalStack.length) setMapFull(false); });
   $('#searchInput').addEventListener('input', (e) => { S.search = e.target.value; $('#searchClear').hidden = !S.search; render(); });
   $('#searchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
   $('#searchClear').addEventListener('click', () => { setSearch(''); $('#searchInput').focus(); });
