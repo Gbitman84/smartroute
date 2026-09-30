@@ -20,7 +20,7 @@ const STATUS = {
   delivered_door:  { label: 'נמסר ליד הדלת',   icon: '🚪', final: true, cls: 'done' },
   no_answer_final: { label: 'לא ענה – סופי',   icon: '❌', final: true, cls: 'nofinal' },
 };
-const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 'google' : 'osm', googleKey: googleMapsKey || '', optimizer: 'google', serviceSeconds: 90, traffic: true, routeMode: 'both', readMode: 'auto' };
+const DEFAULT_SETTINGS = { defaultCity: 'חולון', geocoder: googleMapsKey ? 'google' : 'osm', googleKey: googleMapsKey || '', serviceSeconds: 90, traffic: true, routeMode: 'both', readMode: 'auto' };
 // Two route engines, each with its own frozen "initial" and its own "updated" numbering.
 const F = {
   osrm:   { init: 'initialStop', initSub: 'initialSub', upd: 'updatedStop', updSub: 'updatedSub', has: 'hasInitialRoute', line: 'routePolyline', dist: 'routeDistance', dur: 'routeDuration', built: 'initialBuiltAt' },
@@ -305,9 +305,10 @@ async function buildMatrix(points, approaches) {
   }
 }
 
-// Order the stop groups with the chosen engine. Google → Cloud Function; falls back to the free engine.
+// Order the stop groups with the engine chosen in "build route" (google | osrm). Google → Cloud Function;
+// if it fails, falls back to the free engine (with a red toast).
 const pt = (p) => ({ lat: p.lat, lng: p.lng });
-async function optimizeOrder(start, end, gList, engine = S.settings.optimizer) {
+async function optimizeOrder(start, end, gList, engine) {
   if (engine === 'google' && S.db.optimize) {
     try {
       const r = await S.db.optimize({
@@ -2030,8 +2031,6 @@ async function settingsSheet() {
     const geocoder = el('select', {}, el('option', { value: 'osm' }, 'OpenStreetMap (חינמי, לרוב ברמת רחוב)'), el('option', { value: 'google' }, 'Google (מדויק לכתובת, דורש מפתח API)'));
     geocoder.value = S.settings.geocoder;
     const key = el('input', { value: S.settings.googleKey, placeholder: 'AIza…', dir: 'ltr' });
-    const optimizer = el('select', {}, el('option', { value: 'google' }, ENGINE_LABEL.google), el('option', { value: 'osrm' }, ENGINE_LABEL.osrm));
-    optimizer.value = S.settings.optimizer;
     const service = el('input', { type: 'number', min: '0', max: '1800', step: '15', value: S.settings.serviceSeconds, inputmode: 'numeric' });
     const traffic = el('input', { type: 'checkbox' });
     traffic.checked = S.settings.traffic !== false;
@@ -2044,7 +2043,6 @@ async function settingsSheet() {
       el('label', { class: 'field' }, 'עיר ברירת מחדל', city),
       el('label', { class: 'field' }, 'איתור כתובות (Geocoding)', geocoder),
       el('label', { class: 'field' }, 'מפתח Google Maps API (לא חובה)', key),
-      el('label', { class: 'field' }, 'מנוע סידור מסלול', optimizer),
       el('label', { class: 'field' }, 'זמן עצירה ממוצע לכל כתובת (שניות)', service),
       el('label', { class: 'switch', style: 'margin-top:10px' }, traffic, el('span', {}, 'להתחשב בעומסי תנועה (Google)')),
       el('label', { class: 'field' }, 'קריאת צילומים בייבוא (Claude)', readMode),
@@ -2054,7 +2052,7 @@ async function settingsSheet() {
       el('p', { class: 'muted' }, 'מנהל המערכת רואה את מצב המשלוחים שלך ואת המיקום האחרון שנקלט באפליקציה (ברענון מיקום ובעדכון סטטוס בלבד).'),
     );
     const save = async () => {
-      const next = { defaultCity: city.value.trim() || 'חולון', geocoder: geocoder.value, googleKey: key.value.trim(), optimizer: optimizer.value, serviceSeconds: Math.max(0, Math.min(1800, +service.value || 0)), traffic: traffic.checked, readMode: readMode.value };
+      const next = { defaultCity: city.value.trim() || 'חולון', geocoder: geocoder.value, googleKey: key.value.trim(), serviceSeconds: Math.max(0, Math.min(1800, +service.value || 0)), traffic: traffic.checked, readMode: readMode.value };
       if (next.geocoder === 'google' && !next.googleKey) return toast('לאיתור Google צריך מפתח API', { err: true });
       S.settings = { ...S.settings, ...next };
       await S.db.setMeta('settings', next);
