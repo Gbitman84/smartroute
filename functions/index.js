@@ -96,7 +96,8 @@ exports.optimizeRoute = onCall({ region: 'europe-west1', memory: '256MiB', timeo
 // ------------------------------------------------------------------ screenshot import (Claude Vision)
 const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
 const EXTRACT_MODELS = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' };
-const EXTRACT_EFFORT = 'low';           // reading printed text; raise to 'medium' if accuracy needs it
+const EXTRACT_EFFORT = 'medium';        // test 30/09: 'low' misread Hebrew names (שבח→שבב); 'medium' read them right for +4% cost
+const ZOOM_EFFORT = 'low';              // zoom check: a few short lines per request
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMPORT_TTL_DAYS = 14;
 const FIELDS = ['appOrder', 'shipmentId', 'name', 'street', 'houseNo', 'city', 'ref'];
@@ -154,11 +155,92 @@ const EXTRACT_SCHEMA = {
 };
 
 const clampPct = (v) => Math.max(0, Math.min(100, Math.round(+v || 0)));
+const EFFORTS = ['low', 'medium', 'high'];
+
+// Zoom check: the name + destination lines of each card, cropped by the app from the screenshot it already read.
+// A second, independent read of the Hebrew text (Opus) – the app marks every difference in yellow.
+const ZOOM_FIELDS = ['name', 'city', 'street', 'houseNo'];
+const MAX_STRIPS = 20, MAX_STRIP_BYTES = 400 * 1024;
+const ZOOM_PROMPT = `כל תמונה היא רצועה מכרטיס משלוח אחד באפליקציית משלוחים, מסומנת במספר (i).
+ברצועה יש שורה "מסירה <שם>" ומתחתיה שורת "יעד", למשל "#14 יעד: חולון שנקר 72".
+לכל רצועה החזר:
+- name = הטקסט אחרי המילה "מסירה", בדיוק אות-אות כפי שכתוב (עברית או אנגלית). שים לב במיוחד לאותיות דומות: ב/כ, ח/ה/ת, ד/ר, ו/ז/ן, ס/ם, א/ה.
+- city = המילה הראשונה אחרי "יעד:". street = מה שבין העיר למספר הבית. houseNo = המספר בסוף השורה (כולל אות אם יש).
+- unreadable = true אם הרצועה חתוכה או לא ניתן לקרוא אותה, ואז השדות שלא נראים → "".
+לא לנחש ולא לתקן שמות לפי מה שנראה הגיוני – להעתיק את מה שכתוב.`;
+const ZOOM_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['cards'],
+  properties: {
+    cards: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['i', ...ZOOM_FIELDS, 'unreadable'],
+        properties: { i: { type: 'integer' }, name: { type: 'string' }, city: { type: 'string' }, street: { type: 'string' }, houseNo: { type: 'string' }, unreadable: { type: 'boolean' } },
+      },
+    },
+  },
+};
+
+async function askClaude({ modelId, effort, system, schema, content }) {
+  const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
+  let res;
+  try {
+    res = await client.beta.messages.create({
+      model: modelId,
+      max_tokens: 16000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      system,
+      output_config: { effort, format: { type: 'json_schema', schema } },
+      messages: [{ role: 'user', content }],
+    });
+  } catch (e) {
+    console.error('extract failed', modelId, e.status, e.message);
+    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) throw new HttpsError('failed-precondition', 'מפתח Anthropic לא תקין');
+    if (e instanceof Anthropic.RateLimitError) throw new HttpsError('resource-exhausted', 'עומס זמני אצל Anthropic – נסה שוב בעוד דקה');
+    if (e instanceof Anthropic.BadRequestError) throw new HttpsError('invalid-argument', 'Claude: ' + e.message);
+    throw new HttpsError('unavailable', 'Claude לא זמין: ' + (e.message || e));
+  }
+  if (res.stop_reason === 'refusal') throw new HttpsError('aborted', 'Claude סירב לקרוא את הצילום');
+  if (res.stop_reason === 'max_tokens') throw new HttpsError('aborted', 'התשובה נקטעה – נסה צילום עם פחות כרטיסים');
+  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  try { return { res, out: JSON.parse(text) }; } catch { throw new HttpsError('internal', 'תשובה לא תקינה מ-Claude'); }
+}
+
+async function zoomRead(who, { strips, model = 'opus', effort }) {
+  const modelId = EXTRACT_MODELS[model];
+  if (!modelId) throw new HttpsError('invalid-argument', 'מודל לא מוכר');
+  if (!Array.isArray(strips) || !strips.length || strips.length > MAX_STRIPS) throw new HttpsError('invalid-argument', `צריך 1–${MAX_STRIPS} רצועות`);
+  const ok = strips.every((s) => Number.isInteger(s?.i) && typeof s.data === 'string' && s.data.length <= MAX_STRIP_BYTES * 1.4 && /^[A-Za-z0-9+/=]+$/.test(s.data));
+  if (!ok) throw new HttpsError('invalid-argument', 'רצועה לא תקינה');
+
+  await consumeQuota('scanReads', who, { inc: { ['zoom_' + model]: 1 } });
+
+  const content = strips.flatMap((s) => [
+    { type: 'text', text: `רצועה i=${s.i}:` },
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: s.data } },
+  ]);
+  content.push({ type: 'text', text: 'קרא את כל הרצועות.' });
+  const { res, out } = await askClaude({ modelId, effort: EFFORTS.includes(effort) ? effort : ZOOM_EFFORT, system: ZOOM_PROMPT, schema: ZOOM_SCHEMA, content });
+  const ids = new Set(strips.map((s) => s.i));
+  return {
+    model, kind: 'zoom', modelId: res.model,
+    cards: (out.cards || []).filter((c) => ids.has(c.i)).map((c) => ({
+      i: c.i, unreadable: !!c.unreadable, ...Object.fromEntries(ZOOM_FIELDS.map((f) => [f, String(c[f] ?? '').trim()])),
+    })),
+    usage: { input: res.usage?.input_tokens || 0, output: res.usage?.output_tokens || 0 },
+  };
+}
 
 exports.extractShipments = onCall({ region: 'europe-west1', memory: '512MiB', timeoutSeconds: 180, maxInstances: 4, secrets: [ANTHROPIC_API_KEY] }, async (req) => {
   const who = await requireMember(req); // every active SmartRoute member
 
-  const { path, model = 'sonnet' } = req.data || {};
+  if (req.data?.kind === 'zoom') return zoomRead(who, req.data);
+  const { path, model = 'sonnet', effort } = req.data || {};
   const modelId = EXTRACT_MODELS[model];
   if (!modelId) throw new HttpsError('invalid-argument', 'מודל לא מוכר');
   // Only the caller's own import folder.
@@ -175,37 +257,16 @@ exports.extractShipments = onCall({ region: 'europe-west1', memory: '512MiB', ti
   if (buf.length > MAX_IMAGE_BYTES) throw new HttpsError('invalid-argument', 'הצילום גדול מדי');
   const mediaType = ['image/jpeg', 'image/png', 'image/webp'].includes(meta.contentType) ? meta.contentType : 'image/jpeg';
 
-  const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY.value() });
-  let res;
-  try {
-    res = await client.beta.messages.create({
-      model: modelId,
-      max_tokens: 16000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      system: EXTRACT_PROMPT,
-      output_config: { effort: EXTRACT_EFFORT, format: { type: 'json_schema', schema: EXTRACT_SCHEMA } },
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: buf.toString('base64') } },
-          { type: 'text', text: 'קרא את כל כרטיסי המשלוח בצילום הזה.' },
-        ],
-      }],
-    });
-  } catch (e) {
-    console.error('extract failed', model, e.status, e.message);
-    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) throw new HttpsError('failed-precondition', 'מפתח Anthropic לא תקין');
-    if (e instanceof Anthropic.RateLimitError) throw new HttpsError('resource-exhausted', 'עומס זמני אצל Anthropic – נסה שוב בעוד דקה');
-    if (e instanceof Anthropic.BadRequestError) throw new HttpsError('invalid-argument', 'Claude: ' + e.message);
-    throw new HttpsError('unavailable', 'Claude לא זמין: ' + (e.message || e));
-  }
-
-  if (res.stop_reason === 'refusal') throw new HttpsError('aborted', 'Claude סירב לקרוא את הצילום');
-  if (res.stop_reason === 'max_tokens') throw new HttpsError('aborted', 'התשובה נקטעה – נסה צילום עם פחות כרטיסים');
-  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-  let out;
-  try { out = JSON.parse(text); } catch { throw new HttpsError('internal', 'תשובה לא תקינה מ-Claude'); }
+  const { res, out } = await askClaude({
+    modelId,
+    effort: EFFORTS.includes(effort) ? effort : EXTRACT_EFFORT,
+    system: EXTRACT_PROMPT,
+    schema: EXTRACT_SCHEMA,
+    content: [
+      { type: 'image', source: { type: 'base64', media_type: mediaType, data: buf.toString('base64') } },
+      { type: 'text', text: 'קרא את כל כרטיסי המשלוח בצילום הזה.' },
+    ],
+  });
 
   return {
     model,

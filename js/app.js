@@ -3,6 +3,7 @@ import { googleMapsKey } from './firebase-config.js';
 import * as maps from './maps/provider.js';
 import { solvePath } from './solver.js';
 import { wazeUrl, gmapsUrl, gmapsSegments } from './nav.js';
+import { STARTER_NAMES, nameIssue, nameWords } from './names.js';
 import {
   captureInvite, ensureMember, isSuperEmail, emailRefName, nameRefName, refId, registrationUrl,
 } from './members.js';
@@ -1048,6 +1049,8 @@ function rowFlags(r, ctx) {
   if (ctx.photo) {
     const st = streetIssue(r.street, ctx.streets[r.city || S.settings.defaultCity]);
     if (st) add('street', st);
+    const ni = ctx.names && nameIssue(r.name, ctx.names);
+    if (ni) add('name', ni);
     const untouched = (k) => String(r[k] ?? '') === String(r.orig?.[k] ?? '');
     (r.uncertain || []).forEach((k) => untouched(k) && add(k, { level: 'warn', msg: 'Claude לא בטוח בקריאה' }));
     Object.entries(r.conflicts || {}).forEach(([k, vals]) => untouched(k) && add(k, { level: 'warn', msg: `קריאות שונות: ${vals.map((v) => v || '(ריק)').join(' / ')}` }));
@@ -1063,9 +1066,27 @@ async function checkContext(rows, photo) {
   const ctx = { photo, shape: commonIdShape(rows.map((r) => r.shipmentId)), streets: {} };
   if (photo) {
     const cities = [...new Set(rows.map((r) => r.city || S.settings.defaultCity))];
-    await Promise.all(cities.map(async (c) => { ctx.streets[c] = await ensureStreets(c); }));
+    await Promise.all([
+      ...cities.map(async (c) => { ctx.streets[c] = await ensureStreets(c); }),
+      knownNames().then((n) => { ctx.names = n; }),
+    ]);
   }
   return ctx;
+}
+
+// Known name words: the starter list + names learned from earlier confirmed imports (meta/names).
+let learnedNames = null;
+async function knownNames() {
+  learnedNames ||= S.db.getMeta('names').then((m) => Object.keys(m?.words || {})).catch(() => []);
+  return new Set([...STARTER_NAMES, ...(await learnedNames)]);
+}
+// After an import: learn the names nobody doubted, plus the ones the user fixed or accepted.
+function learnNames(rows) {
+  const words = {};
+  rows.forEach((r) => { if (!r.flags?.name?.length) nameWords(r.name).forEach((w) => { words[w] = 1; }); });
+  if (!Object.keys(words).length) return;
+  learnedNames = null;
+  S.db.setMeta('names', { words }).catch((e) => console.warn('learn names', e));
 }
 
 // Missing app-order numbers (#), with the screenshots on both sides of each gap.
@@ -1092,20 +1113,26 @@ function gapText(g) {
 }
 
 // ------------------------------------------------------------------ import from screenshots (Claude Vision)
-const READ_MODES = { auto: '🧠 אוטומטי – Sonnet, ו-Opus כשיש ספק', sonnet: '⚡ Sonnet בלבד (זול)', opus: '🎯 Opus בלבד (הכי מדויק)' };
-const MODEL_LABEL = { sonnet: 'Sonnet', opus: 'Opus' };
+const READ_MODES = { auto: '🧠 אוטומטי – Sonnet + בדיקת זום לשמות ולכתובות ב-Opus', sonnet: '⚡ Sonnet בלבד (זול)', opus: '🎯 Opus בלבד (הכי מדויק)' };
+const MODEL_LABEL = { sonnet: 'Sonnet', opus: 'Opus', zoom: 'Opus 🔍 זום' };
 const READ_PRICE = { sonnet: [2, 10], opus: [4, 20] };           // $ per million tokens: input, output
-const PER_SHOT = { auto: 0.025, sonnet: 0.02, opus: 0.04, double: 0.06 };
+const PER_SHOT = { auto: 0.03, sonnet: 0.02, opus: 0.04, double: 0.06 };
 const IMPORT_TTL = 14 * 86400000;
+const MAX_SIDE = 2576, MAX_UPLOAD = 5 * 1024 * 1024;
 
-// Full resolution for the model (up to 2576px on the long edge), JPEG 0.9.
+// Full resolution for the model (up to 2576px on the long edge). A screenshot that already fits is sent
+// as is (no second JPEG compression); a larger one is scaled down and saved as JPEG 0.92.
 async function prepareImage(file) {
   const bmp = await createImageBitmap(file);
-  const k = Math.min(1, 2576 / Math.max(bmp.width, bmp.height));
+  if (['image/jpeg', 'image/png'].includes(file.type) && file.size <= MAX_UPLOAD && Math.max(bmp.width, bmp.height) <= MAX_SIDE) {
+    bmp.close?.();
+    return file;
+  }
+  const k = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));
   const c = el('canvas', { width: Math.round(bmp.width * k), height: Math.round(bmp.height * k) });
   c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
   bmp.close?.();
-  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('המרת התמונה נכשלה'))), 'image/jpeg', 0.9));
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('המרת התמונה נכשלה'))), 'image/jpeg', 0.92));
 }
 
 // Run fn over items, at most n at a time.
@@ -1127,10 +1154,51 @@ async function readPhoto(p, model) {
   return r;
 }
 
+// Zoom check (automatic mode): the name + destination lines of every full card, cropped from the screenshot
+// and read again by Opus in one request. Every difference from the first read is marked in yellow.
+const ZOOM_FIELDS = ['name', 'city', 'street', 'houseNo'];
+const ZOOM_BOX = { left: 0.26, above: 0.012, part: 0.7 };   // card text column; top of the card to ~70% of its height
+
+async function zoomStrips(blob, cards) {
+  const bmp = await createImageBitmap(blob);
+  const W = bmp.width, H = bmp.height;
+  const strips = [];
+  for (const [i, c] of cards.entries()) {
+    if (c.partial || !c.hPct || !cardKey(c.shipmentId)) continue;
+    const y0 = Math.max(0, Math.round((c.yPct / 100 - ZOOM_BOX.above) * H));
+    const y1 = Math.min(H, Math.round(((c.yPct + c.hPct * ZOOM_BOX.part) / 100 + ZOOM_BOX.above) * H));
+    const x0 = Math.round(W * ZOOM_BOX.left);
+    if (y1 - y0 < 20) continue;
+    const cv = el('canvas', { width: W - x0, height: y1 - y0 });
+    cv.getContext('2d').drawImage(bmp, x0, y0, W - x0, y1 - y0, 0, 0, W - x0, y1 - y0);
+    const b = await new Promise((res) => cv.toBlob(res, 'image/jpeg', 0.95));
+    const data = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(b); });
+    strips.push({ i, key: cardKey(c.shipmentId), data });
+  }
+  bmp.close?.();
+  return strips;
+}
+
+async function zoomPhoto(p) {
+  if (p.reads.zoom || !p.reads.sonnet?.cards?.length) return;
+  const strips = await zoomStrips(p.blob || p.file, p.reads.sonnet.cards);
+  if (!strips.length) { p.reads.zoom = { byKey: {} }; return; }
+  const r = await S.db.extract({ kind: 'zoom', model: 'opus', strips: strips.map(({ i, data }) => ({ i, data })) });
+  const keyOf = new Map(strips.map((s) => [s.i, s.key]));
+  p.reads.zoom = { byKey: Object.fromEntries(r.cards.filter((c) => !c.unreadable && keyOf.has(c.i)).map((c) => [keyOf.get(c.i), c])) };
+  S.db.incUsage('extract_zoom').catch(() => {});
+  if (r.usage) {
+    S.db.incUsage('extractIn_opus', r.usage.input || 0).catch(() => {});
+    S.db.incUsage('extractOut_opus', r.usage.output || 0).catch(() => {});
+  }
+}
+
 // Prepare, upload and read screenshots – one request per screenshot, 3 in parallel.
-// Automatic mode: every screenshot with a warning sign gets a second read by Opus.
+// Automatic mode: Sonnet reads, Opus zoom-checks the names and addresses of every screenshot;
+// a full second read by Opus only for structural problems (a card without a shipment number, a gap inside one screenshot).
 async function readPhotos(sess, list, progress) {
   const models = sess.mode === 'opus' ? ['opus'] : sess.double ? ['sonnet', 'opus'] : ['sonnet'];
+  const zoom = sess.mode === 'auto' && !sess.double;
   let done = 0;
   progress(`מכין ${list.length} צילומים…`);
   await pool(list, 3, async (p) => {
@@ -1146,15 +1214,27 @@ async function readPhotos(sess, list, progress) {
       console.warn('read photo', p.n, e);
       p.error = errText(e);
     }
+    if (zoom && !p.error) {
+      progress(`בודק שמות וכתובות בזום ${done + 1}/${list.length}…`);
+      try { await zoomPhoto(p); p.zoomError = null; } catch (e) { console.warn('zoom photo', p.n, e); p.zoomError = errText(e); }
+    }
     progress(`קורא צילומים ${++done}/${list.length}…`);
   });
-  if (sess.mode !== 'auto' || sess.double) return;
+  if (!zoom) return;
 
   const rows = buildRows(sess);
   const ctx = await checkContext(rows, true);
   const suspect = new Set();
-  rows.forEach((r) => { if (Object.keys(rowFlags(r, ctx)).length || r.notes.length) r.src.photos.forEach((n) => suspect.add(n)); });
-  gapIssues(rows).forEach((g) => { if (g.pl != null && g.pl === g.ph) suspect.add(g.pl); });
+  const NUM_FIELDS = ['shipmentId', 'appOrder', 'ref'];
+  rows.forEach((r) => {
+    if (r.src.partial) return;
+    const flags = rowFlags(r, ctx);
+    const numbers = NUM_FIELDS.some((k) => flags[k]?.length);
+    // Zoom failed for this screenshot → fall back to the old rule (any flag → Opus).
+    const zoomMissing = r.src.photos.some((n) => sess.photos.find((q) => q.n === n)?.zoomError);
+    if (numbers || (zoomMissing && Object.keys(flags).length)) r.src.photos.forEach((n) => suspect.add(n));
+  });
+  // Gaps in # stay a yellow note in the preview – the delivery app often skips numbers, so they don't trigger a re-read.
   const again = sess.photos.filter((p) => suspect.has(p.n) && p.path && !p.reads.opus);
   done = 0;
   await pool(again, 3, async (p) => {
@@ -1204,6 +1284,16 @@ function photoCards(p) {
       const av = cardValues(alt);
       reads.push({ model: 'sonnet', ...av });
       FIELDS.forEach((k) => { if (!sameVal(k, v[k], av[k])) conflicts[k] = [v[k], av[k]]; });
+    }
+    // Zoom check: Opus read the name + destination lines of this card again, enlarged.
+    const z = p.reads.zoom?.byKey?.[cardKey(v.shipmentId)];
+    if (z) {
+      const zv = { ...v, ...Object.fromEntries(ZOOM_FIELDS.map((k) => [k, k === 'city' ? z.city || v.city : z[k]])) };
+      reads.push({ model: 'zoom', ...zv });
+      ZOOM_FIELDS.forEach((k) => {
+        if (sameVal(k, v[k], zv[k])) return;
+        conflicts[k] = [...new Set([...(conflicts[k] || [v[k]]), zv[k]])];
+      });
     }
     return { c, reads, conflicts, uncertain: c.uncertain || [], notes: other && !alt ? ['נקרא רק ע״י Opus'] : [] };
   });
@@ -1531,8 +1621,10 @@ function previewSheet(rows, { sess = null, ctx = null } = {}) {
     };
     const upd = () => {
       const opusAgain = photoMode && sess.mode === 'auto' && !sess.double ? sess.photos.filter((p) => p.reads.sonnet && p.reads.opus).length : 0;
+      const zoomed = photoMode ? sess.photos.filter((p) => p.reads.zoom).length : 0;
+      const zoomFailed = photoMode ? sess.photos.filter((p) => p.zoomError).length : 0;
       summary.textContent = `${rowEls.filter((x) => x.cb.checked).length} מתוך ${rows.length} שורות מסומנות לייבוא. אפשר לערוך כל תא לפני האישור.` +
-        (photoMode ? ` · ${sess.photos.length} צילומים${opusAgain ? ` · ${opusAgain} נבדקו שוב ב-Opus` : ''}${sess.double ? ' · קריאה כפולה' : ''}` : '');
+        (photoMode ? ` · ${sess.photos.length} צילומים${zoomed ? ` · 🔍 ${zoomed} נבדקו בזום` : ''}${zoomFailed ? ` · ${zoomFailed} בלי זום (שגיאה)` : ''}${opusAgain ? ` · ${opusAgain} נבדקו שוב ב-Opus` : ''}${sess.double ? ' · קריאה כפולה' : ''}` : '');
     };
     function refresh() {
       ctx.shape = commonIdShape(rows.map((r) => r.shipmentId));
@@ -1626,6 +1718,7 @@ function previewSheet(rows, { sess = null, ctx = null } = {}) {
             flags: flagList(r.flags), notes: r.notes || [], accepted: r.accepted || [],
           })),
         }).catch((e) => console.warn('save import record', e));
+        learnNames(rowsIn);
       }
       toast(`יובאו ${docs.length} משלוחים ✓`);
       const toGeo = docs.filter((d) => d.geoStatus === 'pending').map((d) => ({ ...existing.get(d.shipmentId), ...d }));
@@ -1956,7 +2049,7 @@ async function settingsSheet() {
       el('label', { class: 'switch', style: 'margin-top:10px' }, traffic, el('span', {}, 'להתחשב בעומסי תנועה (Google)')),
       el('label', { class: 'field' }, 'קריאת צילומים בייבוא (Claude)', readMode),
       el('p', { class: 'usage' }, `שימוש ב-Google החודש: ${usage?.geocode || 0} איתורים (חינם עד 10,000) · ${usage?.routeoptRequests || 0} חישובי מסלול, ${usage?.routeoptShipments || 0} משלוחים (חינם עד 5,000).`),
-      el('p', { class: 'usage' }, `קריאת צילומים החודש: Sonnet ${shots('sonnet')}, Opus ${shots('opus')} · עלות משוערת ~$${readCost.toFixed(2)}.`),
+      el('p', { class: 'usage' }, `קריאת צילומים החודש: Sonnet ${shots('sonnet')}, Opus ${shots('opus')}, בדיקות זום ${shots('zoom')} · עלות משוערת ~$${readCost.toFixed(2)}.`),
       el('p', { class: 'muted' }, S.db.mode === 'firebase' ? `מחובר כ: ${S.user.email || S.user.name}` : 'מצב הדגמה – הנתונים בדפדפן הזה בלבד.'),
       el('p', { class: 'muted' }, 'מנהל המערכת רואה את מצב המשלוחים שלך ואת המיקום האחרון שנקלט באפליקציה (ברענון מיקום ובעדכון סטטוס בלבד).'),
     );
