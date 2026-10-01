@@ -134,7 +134,9 @@ body.map-full .pick-hint { top: calc(60px + env(safe-area-inset-top)); }
 .me-marker { width: 18px; height: 18px; border-radius: 50%; background: #16a34a; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(22,163,74,.25); }
 
 .list { padding: 10px 16px 90px; display: flex; flex-direction: column; gap: 10px; }
-.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px; border: 1px solid var(--line); border-inline-start: 5px solid var(--primary); }
+.card { position: relative; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px; border: 1px solid var(--line); border-inline-start: 5px solid var(--primary); }
+.card .edit-corner { position: absolute; top: 8px; left: 8px; width: 40px; height: 36px; min-height: 0; padding: 0; font-size: 16px; }
+.card .card-top { padding-left: 46px; }   /* keep badges clear of ✎ */
 .card.temp { border-inline-start-color: var(--warn); }
 .card.done { background: var(--done-bg); border-inline-start-color: #9ca3af; }
 .card.done.ok { background: var(--ok-bg); border-color: var(--ok-line); border-inline-start-color: var(--accent); }

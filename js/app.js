@@ -603,8 +603,9 @@ function card(d) {
       el('a', { class: 'btn gmaps', href: gmapsUrl(d), target: '_blank', rel: 'noopener' }, 'Google'),
     );
   }
-  if (!ro) actions.append(el('button', { class: 'btn edit', type: 'button', title: 'עריכה', onclick: () => editSheet(d) }, '✎'));
   c.append(actions);
+  // ✎ in the card's top-left corner.
+  if (!ro) c.append(el('button', { class: 'btn edit edit-corner', type: 'button', title: 'עריכה', onclick: () => editSheet(d) }, '✎'));
   return c;
 }
 
