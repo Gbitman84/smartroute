@@ -522,13 +522,20 @@ function card(d) {
   const doneCls = d.movedTo ? 'done moved' : d.status === 'no_answer_final' ? 'done fail' : 'done ok';
   const c = el('article', { class: 'card ' + (fin ? doneCls : st.cls || ''), id: 'c-' + d.shipmentId });
 
-  c.append(el('div', { class: 'card-top' },
-    badge('app', 'אפליקציה', d.appOrder != null ? '#' + d.appOrder : null),
-    showSmart() || S.day?.hasSmartInitial ? badge('sinit', 'חכם ראשוני', stopLabel(d.smartInitialStop, d.smartInitialSub)) : null,
-    showSmart() ? badge('supd', 'חכם מעודכן', fin ? null : stopLabel(d.smartUpdatedStop, d.smartUpdatedSub)) : null,
-    showRegular() || S.day?.hasInitialRoute ? badge('init', 'ראשוני', stopLabel(d.initialStop, d.initialSub)) : null,
+  // Row 1: app → smart initial → smart updated (fixed order; the smart badges show even before a route is built,
+  // except on a day built only with the regular engine). Row 2: the regular engine, once it was used. Row 3: shipment number.
+  const smart = !(routeMode() === 'regular' && S.day?.hasInitialRoute);
+  const regular = S.day?.hasInitialRoute ? [
+    badge('init', 'ראשוני', stopLabel(d.initialStop, d.initialSub)),
     showRegular() ? badge('upd', 'מעודכן', fin ? null : stopLabel(d.updatedStop, d.updatedSub)) : null,
-    el('span', { class: 'ship' }, d.shipmentId),
+  ].filter(Boolean) : [];
+  c.append(el('div', { class: 'card-top' },
+    el('div', { class: 'badge-row' },
+      badge('app', 'אפליקציה', d.appOrder != null ? '#' + d.appOrder : null),
+      smart ? badge('sinit', 'חכם ראשוני', stopLabel(d.smartInitialStop, d.smartInitialSub)) : null,
+      smart ? badge('supd', 'חכם מעודכן', fin ? null : stopLabel(d.smartUpdatedStop, d.smartUpdatedSub)) : null),
+    regular.length ? el('div', { class: 'badge-row' }, ...regular) : null,
+    el('div', { class: 'ship' }, d.shipmentId),
   ));
   c.append(el('div', { class: 'name strike' }, d.name || '—'));
   c.append(el('div', { class: 'addr' }, el('span', { class: 'strike' }, fullAddress(d)), geoChip(d)));
@@ -578,32 +585,6 @@ function nextStops() {
     nearest = withD[0]?.d || null;
   }
   return { next, nearest };
-}
-
-function renderNext() {
-  const box = $('#nextStop');
-  const { next, nearest } = nextStops();
-  if (!next || readonly()) { box.hidden = true; return; }
-  box.hidden = false;
-  box.replaceChildren(...[
-    el('div', { class: 'lbl' }, `העצירה הבאה · ${showSmart() ? 'חכם ' : ''}מעודכן ${updLabel(next) ?? '—'} · ${showSmart() ? 'חכם ' : ''}ראשוני ${initLabel(next) ?? '—'}` +
-      (showSmart() && showRegular() ? ` · רגיל ${stopLabel(next.updatedStop, next.updatedSub) ?? '—'}` : '')),
-    el('div', { class: 'who' }, next.name || '—'),
-    el('div', { class: 'where' }, fullAddress(next)),
-    el('div', { class: 'info' },
-      el('span', {}, el('small', {}, 'אפליקציה '), next.appOrder != null ? '#' + next.appOrder : '—'),
-      el('span', {}, el('small', {}, "אס' 2 "), next.ref || '—'),
-      el('span', {}, el('small', {}, 'משלוח '), next.shipmentId),
-    ),
-    el('div', { class: 'row' },
-      el('a', { class: 'btn waze small', href: wazeUrl(next), target: '_blank', rel: 'noopener' }, 'נווט ב-Waze'),
-      el('a', { class: 'btn gmaps small', href: gmapsUrl(next), target: '_blank', rel: 'noopener' }, 'Google Maps'),
-      el('button', { class: 'btn small', type: 'button', onclick: () => scrollToCard(next.shipmentId) }, 'הצג'),
-    ),
-    nearest && nearest.shipmentId !== next.shipmentId
-      ? el('div', { class: 'alt' }, `📍 הכי קרוב אליך עכשיו: ${nearest.name || ''} – ${fullAddress(nearest)} `, el('button', { class: 'btn small ghost', style: 'color:#fff;border-color:rgba(255,255,255,.4)', type: 'button', onclick: () => scrollToCard(nearest.shipmentId) }, 'הצג'))
-      : null,
-  ].filter(Boolean));
 }
 
 function scrollToCard(id) {
@@ -666,7 +647,6 @@ function render() {
   $('#sortSel').value = S.sort;
 
   renderCounts();
-  renderNext();
   const q = norm(S.search);
   const shown = S.deliveries.filter((d) => !(S.hideDone && isFinal(d)));
   const list = sorted(q ? S.deliveries.filter((d) => matches(d, q)) : shown);
