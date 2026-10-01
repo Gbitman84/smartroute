@@ -461,6 +461,39 @@ async function setStatus(d, status) {
   getCurrentPosition().then(setMe).catch(() => {}); // keep the last location fresh, no continuous tracking
 }
 
+// 📦 Where the package sits in the car (set while loading). Not a status – no history entry.
+const SPOTS = {
+  front: 'מקדימה',
+  back_right: 'אחורה ימין', back_right_low: 'אחורה ימין למטה', back_mid: 'אחורה אמצע',
+  back_left: 'אחורה שמאל', back_left_low: 'אחורה שמאל למטה',
+  trunk_left: "פגאז' שמאל", trunk_mid: "פגאז' אמצע", trunk_right: "פגאז' ימין",
+};
+const SPOT_GROUPS = [
+  ['אחורה', ['back_right', 'back_right_low', 'back_mid', 'back_left', 'back_left_low']],
+  ["פגאז'", ['trunk_left', 'trunk_mid', 'trunk_right']],
+];
+const spotLabel = (d) => SPOTS[d.spot] || '';
+
+function spotSheet(d) {
+  openModal((m, close) => {
+    const pick = async (spot) => { close(); await S.db.updateDelivery(S.key, d.shipmentId, { spot }); };
+    const opt = (key, cls = '') => el('button', { class: `btn ${cls}${d.spot === key ? ' cur' : ''}`, type: 'button', onclick: () => pick(key) }, SPOTS[key]);
+    m.append(el('h2', {}, `📦 מיקום ברכב · ${d.name || d.shipmentId}`), el('p', { class: 'muted' }, fullAddress(d)));
+    const box = el('div', { class: 'status-opts' }, opt('front'));
+    for (const [label, keys] of SPOT_GROUPS) {
+      const sub = el('div', { class: 'spot-sub' }, keys.map((k) => opt(k)));
+      sub.hidden = !keys.includes(d.spot);
+      const head = el('button', { class: 'btn spot-group', type: 'button' });
+      const draw = () => { head.textContent = `${label} ${sub.hidden ? '▾' : '▴'}`; };
+      head.addEventListener('click', () => { sub.hidden = !sub.hidden; draw(); });
+      draw();
+      box.append(head, sub);
+    }
+    m.append(box);
+    if (d.spot) m.append(el('div', { class: 'sheet-actions' }, el('button', { class: 'btn', type: 'button', onclick: () => pick(null) }, '✕ נקה מיקום')));
+  });
+}
+
 function statusSheet(d) {
   openModal((m, close) => {
     m.append(el('h2', {}, `סטטוס · ${d.name || d.shipmentId}`), el('p', { class: 'muted' }, fullAddress(d)));
@@ -562,6 +595,7 @@ function card(d) {
     if (fin) actions.append(el('button', { class: 'btn', type: 'button', onclick: () => setStatus(d, 'pending') }, '↩ בטל'));
     if (d.status === 'no_answer_temp') actions.append(el('button', { class: 'btn temp-again', type: 'button', onclick: () => setStatus(d, 'no_answer_temp') }, '📵 שוב לא ענה'));
     actions.append(el('button', { class: 'btn', type: 'button', onclick: () => statusSheet(d) }, fin ? 'שנה סטטוס' : `${st.icon} סטטוס`));
+    if (!fin) actions.append(el('button', { class: 'btn spot' + (d.spot ? ' set' : ''), type: 'button', onclick: () => spotSheet(d) }, `📦 ${spotLabel(d) || 'מיקום'}`));
   }
   if (!fin) {
     actions.append(
@@ -601,7 +635,7 @@ function matches(d, q) {
   if (/^#\d+$/.test(raw)) return d.appOrder === +raw.slice(1);          // "#22" → app order only
   if (/^\d{3,}$/.test(raw)) return String(d.shipmentId).includes(raw) || String(d.ref || '').includes(raw);
   if (/^\d{1,2}$/.test(raw)) return d.appOrder === +raw || String(d.houseNo) === raw;
-  return norm(`${d.name} ${d.street} ${d.houseNo} ${d.city}`).includes(q) || norm(d.ref).includes(q);
+  return norm(`${d.name} ${d.street} ${d.houseNo} ${d.city} ${spotLabel(d)}`).includes(q) || norm(d.ref).includes(q);
 }
 
 function setSearch(v) {
